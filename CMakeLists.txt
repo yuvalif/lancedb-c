@@ -28,6 +28,19 @@ find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ARROW REQUIRED arrow)
 
+# Find CURL and OpenSSL for AWS Bedrock integration
+find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
+
+# Fetch nlohmann/json for code_search example
+include(FetchContent)
+FetchContent_Declare(
+  nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG        v3.11.3
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # rust-lib target
 add_custom_target(rust-lib
   COMMAND cargo build ${RUST_BUILD_TYPE}
@@ -74,7 +87,28 @@ target_compile_options(full PRIVATE ${ARROW_CFLAGS_OTHER})
 set_target_properties(full PROPERTIES
   BUILD_RPATH ${RUST_TARGET_DIR}
 )
-add_custom_target(examples DEPENDS simple full)
+
+# code_search example - vector similarity search with metadata filtering and AWS Bedrock
+add_executable(code_search examples/code_search.cpp)
+target_link_libraries(code_search
+  lancedb
+  Threads::Threads
+  ${ARROW_LIBRARIES}
+  nlohmann_json::nlohmann_json
+  CURL::libcurl
+  OpenSSL::SSL
+  OpenSSL::Crypto
+)
+target_include_directories(code_search
+  PRIVATE ${ARROW_INCLUDE_DIRS}
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_compile_options(code_search PRIVATE ${ARROW_CFLAGS_OTHER})
+set_target_properties(code_search PROPERTIES
+  BUILD_RPATH ${RUST_TARGET_DIR}
+)
+
+add_custom_target(examples DEPENDS simple full code_search)
 
 # Optional test framework
 option(BUILD_TESTS "Build tests" OFF)
