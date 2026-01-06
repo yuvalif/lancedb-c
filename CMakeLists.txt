@@ -108,7 +108,24 @@ set_target_properties(code_search PROPERTIES
   BUILD_RPATH ${RUST_TARGET_DIR}
 )
 
-add_custom_target(examples DEPENDS simple full code_search)
+# s3vector_simulation example - AWS S3 Vector API simulation using LanceDB
+add_executable(s3vector_simulation examples/s3vector_simulation.cpp)
+target_link_libraries(s3vector_simulation
+  lancedb
+  Threads::Threads
+  ${ARROW_LIBRARIES}
+  nlohmann_json::nlohmann_json
+)
+target_include_directories(s3vector_simulation
+  PRIVATE ${ARROW_INCLUDE_DIRS}
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_compile_options(s3vector_simulation PRIVATE ${ARROW_CFLAGS_OTHER})
+set_target_properties(s3vector_simulation PROPERTIES
+  BUILD_RPATH ${RUST_TARGET_DIR}
+)
+
+add_custom_target(examples DEPENDS simple full code_search s3vector_simulation)
 
 # Optional test framework
 option(BUILD_TESTS "Build tests" OFF)
