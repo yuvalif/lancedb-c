@@ -83,7 +83,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DataFusion Expr Filter", "[que
     REQUIRE(result == LANCEDB_SUCCESS);
     REQUIRE(error_message == nullptr);
 
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result != nullptr);
 
     verify_query_result(query_result, 1);
@@ -124,7 +124,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DataFusion Expr Filter", "[que
     REQUIRE(result == LANCEDB_SUCCESS);
     REQUIRE(error_message == nullptr);
 
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result != nullptr);
 
     verify_query_result(query_result, 5);
@@ -151,7 +151,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DataFusion Expr Filter", "[que
     REQUIRE(result == LANCEDB_SUCCESS);
     REQUIRE(error_message == nullptr);
 
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result != nullptr);
 
     verify_query_result(query_result, 99);
@@ -183,7 +183,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DataFusion Expr Filter", "[que
     REQUIRE(result == LANCEDB_SUCCESS);
     REQUIRE(error_message == nullptr);
 
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result != nullptr);
     verify_query_result(query_result, 1);
   }
@@ -213,7 +213,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DataFusion Expr Filter", "[que
     REQUIRE(result == LANCEDB_SUCCESS);
     REQUIRE(error_message == nullptr);
 
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result != nullptr);
     verify_query_result(query_result, 2);
   }
@@ -247,7 +247,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DataFusion Expr Filter", "[que
     result = lancedb_query_df_filter(query1, original, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
     REQUIRE(error_message == nullptr);
-    LanceDBQueryResult* result1 = lancedb_query_execute(query1);
+    LanceDBQueryResult* result1 = lancedb_query_execute(query1, nullptr);
     REQUIRE(result1 != nullptr);
     verify_query_result(result1, 1);
 
@@ -260,7 +260,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DataFusion Expr Filter", "[que
     result = lancedb_query_df_filter(query2, cloned, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
     REQUIRE(error_message == nullptr);
-    LanceDBQueryResult* result2 = lancedb_query_execute(query2);
+    LanceDBQueryResult* result2 = lancedb_query_execute(query2, nullptr);
     REQUIRE(result2 != nullptr);
     verify_query_result(result2, 2);
   }
@@ -309,7 +309,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DataFusion Expr Filter", "[que
     REQUIRE(result == LANCEDB_SUCCESS);
     REQUIRE(error_message == nullptr);
 
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result != nullptr);
 
     // Convert to Arrow - should return empty result
@@ -347,7 +347,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DataFusion Expr Filter", "[que
     REQUIRE(error_message == nullptr);
 
     // Error should be caught at execution time
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result == nullptr);
   }
 
@@ -381,7 +381,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DataFusion Expr Filter", "[que
     REQUIRE(error_message == nullptr);
 
     // Execute - should return key_42, not key_10
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result != nullptr);
 
     // Convert to Arrow and verify the returned key is "key_42"
@@ -549,7 +549,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
     REQUIRE(error_message == nullptr);
 
     // Should fail at execution due to type mismatch
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result == nullptr);
   }
 
@@ -574,7 +574,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
     REQUIRE(result == LANCEDB_SUCCESS);
     REQUIRE(error_message == nullptr);
 
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result != nullptr);
 
     // Coercion works: should match exactly one row (key "5")
@@ -602,7 +602,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
     REQUIRE(error_message == nullptr);
 
     // Should fail at execution due to type mismatch
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result == nullptr);
   }
 
@@ -627,7 +627,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
     REQUIRE(error_message == nullptr);
 
     // Should fail at execution due to type mismatch
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result == nullptr);
   }
 
@@ -650,7 +650,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
     REQUIRE(error_message == nullptr);
 
     // Should fail at execution due to type mismatch
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result == nullptr);
   }
 
@@ -676,7 +676,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
     REQUIRE(error_message == nullptr);
 
     // DataFusion coerces and evaluates this - query succeeds
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result != nullptr);
     lancedb_query_result_free(query_result);
   }
@@ -705,7 +705,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
     REQUIRE(error_message == nullptr);
 
     // Should fail at execution — cannot use IN with a vector column
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result == nullptr);
   }
 
@@ -737,7 +737,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
     REQUIRE(error_message == nullptr);
 
     // DataFusion coerces ints to strings so query suceeds
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result != nullptr);
 
     FFI_ArrowArray** result_arrays = nullptr;
@@ -790,7 +790,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
     REQUIRE(error_message == nullptr);
 
     // "hello" != "hello world" no substring matching, just equality
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result != nullptr);
 
     FFI_ArrowArray** result_arrays = nullptr;
@@ -833,7 +833,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
     REQUIRE(error_message == nullptr);
 
     // Should fail at execution due to type mismatch
-    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
     REQUIRE(query_result == nullptr);
   }
 
@@ -906,7 +906,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DF filter + JSON post-filter o
   result = lancedb_query_df_filter(query, df_filter, &error_message);
   REQUIRE(result == LANCEDB_SUCCESS);
 
-  LanceDBQueryResult* query_result = lancedb_query_execute(query);
+  LanceDBQueryResult* query_result = lancedb_query_execute(query, nullptr);
   REQUIRE(query_result != nullptr);
 
   // Convert to Arrow
