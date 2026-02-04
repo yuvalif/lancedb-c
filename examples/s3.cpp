@@ -13,6 +13,17 @@
 
 constexpr size_t DIM = 128;
 
+class schema_guard {
+  struct ArrowSchema& c_schema;
+public:
+  schema_guard(struct ArrowSchema& _c_schema) : c_schema(_c_schema) {}
+  ~schema_guard() {
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+};
+
 auto create_schema() {
   // use arrow to define schema: [id, item]
   auto id_field = arrow::field("id", arrow::int32());
@@ -24,6 +35,9 @@ LanceDBTable* create_empty_table(LanceDBConnection* db) {
   // convert arrow C++ schema to arrow C ABI
   auto schema = create_schema();
   struct ArrowSchema c_schema;
+
+  schema_guard g(c_schema);
+
   if (const auto status = arrow::ExportSchema(*schema, &c_schema); !status.ok()) {
     std::cerr << "failed to export schema to C ABI: " << status.ToString() << std::endl;
     return nullptr;

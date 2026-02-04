@@ -24,6 +24,17 @@ int remove_directory(const char* path) {
   return system(command);
 }
 
+class schema_guard {
+  struct ArrowSchema& c_schema;
+public:
+  schema_guard(struct ArrowSchema& _c_schema) : c_schema(_c_schema) {}
+  ~schema_guard() {
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+};
+
 void print_query_result(
     struct ArrowArray** c_arrays_ptr,
     struct ArrowSchema* c_schema_ptr) {
@@ -127,6 +138,9 @@ int main() {
   std::cout << "arrow schema:" << std::endl << schema->ToString() << std::endl;
   // convert arrow C++ schema to arrow C ABI
   struct ArrowSchema c_schema;
+
+  schema_guard g(c_schema);
+
   if (const auto status = arrow::ExportSchema(*schema, &c_schema); !status.ok()) {
     std::cerr << "failed to export schema to C ABI: " << status.ToString() << std::endl;
     lancedb_connection_free(db);
@@ -253,6 +267,10 @@ int main() {
   auto record_batch = arrow::RecordBatch::Make(
       schema, num_rows, {key_array, data_array, tag1_array, tag2_array, tag3_array});
   struct ArrowArray c_array;
+  // Release the previous schema before re-exporting
+  if (c_schema.release) {
+    c_schema.release(&c_schema);
+  }
   if (const auto status = arrow::ExportRecordBatch(*record_batch, &c_array, &c_schema); !status.ok()) {
     std::cerr << "failed to export record batch to C ABI: " << status.ToString() << std::endl;
   } else {
@@ -267,7 +285,6 @@ int main() {
       }
     } else {
       std::cerr << "failed to create record batch reader from arrow arrays" << std::endl;
-      lancedb_record_batch_reader_free(batch_reader);
     }
   }
 
@@ -329,6 +346,8 @@ int main() {
   } else {
     std::cout << "query returned " << count_out << " results" << std::endl;
     print_query_result(c_arrays_ptr, c_schema_ptr);
+    lancedb_free_arrow_schema(reinterpret_cast<FFI_ArrowSchema*>(c_schema_ptr));
+    lancedb_free_arrow_arrays(reinterpret_cast<FFI_ArrowArray**>(c_arrays_ptr), count_out);
   }
 
   // query the table using query object
@@ -502,6 +521,10 @@ int main() {
         auto record_batch = arrow::RecordBatch::Make(
             schema, num_rows, {key_array, data_array, tag1_array, tag2_array, tag3_array});
         struct ArrowArray c_array;
+        // Release the previous schema before re-exporting
+        if (c_schema.release) {
+          c_schema.release(&c_schema);
+        }
         if (const auto status = arrow::ExportRecordBatch(*record_batch, &c_array, &c_schema); !status.ok()) {
           std::cerr << "failed to export record batch to C ABI: " << status.ToString() << std::endl;
         } else {
@@ -526,7 +549,6 @@ int main() {
             }
           } else {
             std::cerr << "failed to create record batch reader from arrow arrays" << std::endl;
-            lancedb_record_batch_reader_free(batch_reader);
           }
         }
 
@@ -547,9 +569,6 @@ int main() {
     }
   }
 
-  if (c_schema.release) {
-    c_schema.release(&c_schema);
-  }
 
   lancedb_free_table_names(table_names, name_count);
   if (const LanceDBError result = lancedb_connection_drop_all_tables(db, nullptr, nullptr); result != LANCEDB_SUCCESS) {

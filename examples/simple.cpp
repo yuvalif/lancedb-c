@@ -60,17 +60,27 @@ auto create_some_records() {
   return arrow::RecordBatch::Make(create_schema(), TOTAL, {id_array, item_array});
 }
 
+class schema_guard {
+  struct ArrowSchema& c_schema;
+public:
+  schema_guard(struct ArrowSchema& _c_schema) : c_schema(_c_schema) {}
+  ~schema_guard() {
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+};
+
 LanceDBTable* create_table(LanceDBConnection* db) {
   const std::string table_name = "my_table";
   auto schema = create_schema();
   struct ArrowSchema c_schema;
-  if (const auto status = arrow::ExportSchema(*schema, &c_schema); !status.ok()) {
-    std::cerr << "failed to export schema to C ABI: " << status.ToString() << std::endl;
-    return nullptr;
-  }
+
+  schema_guard g(c_schema);
 
   auto initial_data = create_some_records();
   struct ArrowArray c_array;
+  // ExportRecordBatch exports both array and schema
   if (const auto status = arrow::ExportRecordBatch(*initial_data, &c_array, &c_schema); !status.ok()) {
     std::cerr << "failed to export record batch to C ABI: " << status.ToString() << std::endl;
     return nullptr;
@@ -96,7 +106,11 @@ LanceDBTable* create_table(LanceDBConnection* db) {
   std::cout << "created table: " << table_name << " (with data)" << std::endl;
 
   auto new_data = create_some_records();
-  if (const auto status = arrow::ExportRecordBatch(*initial_data, &c_array, &c_schema); !status.ok()) {
+  // Release the previous schema before re-exporting
+  if (c_schema.release) {
+    c_schema.release(&c_schema);
+  }
+  if (const auto status = arrow::ExportRecordBatch(*new_data, &c_array, &c_schema); !status.ok()) {
     std::cerr << "failed to export record batch to C ABI: " << status.ToString() << std::endl;
     return nullptr;
   }
@@ -106,9 +120,6 @@ LanceDBTable* create_table(LanceDBConnection* db) {
       reinterpret_cast<FFI_ArrowSchema*>(&c_schema));
   if (!reader) {
     std::cerr << "failed to create record batch reader from arrow arrays" << std::endl;
-    if (c_array.release) {
-      c_array.release(&c_array);
-    }
     return nullptr;
   }
   if (const LanceDBError result = lancedb_table_add(tbl, reader, nullptr); result != LANCEDB_SUCCESS) {
@@ -117,9 +128,6 @@ LanceDBTable* create_table(LanceDBConnection* db) {
   }
   std::cout << "wrote rows to table" << std::endl;
 
-  if (c_schema.release) {
-    c_schema.release(&c_schema);
-  }
   return tbl;
 }
 
@@ -131,6 +139,8 @@ LanceDBTable* create_empty_table(LanceDBConnection* db) {
     std::cerr << "failed to export schema to C ABI: " << status.ToString() << std::endl;
     return nullptr;
   }
+
+  schema_guard g(c_schema);
 
   // create an empty table based on the schema
   const std::string table_name = "empty_table";
@@ -166,7 +176,11 @@ void create_index(LanceDBTable* tbl) {
   std::cout << "created vector index on 'data' column" << std::endl;
 }
 
-using SearchResult = std::pair<struct ArrowArray**,struct ArrowSchema*>;
+struct SearchResult {
+  struct ArrowArray** arrays;
+  struct ArrowSchema* schema;
+  size_t count;
+};
 
 SearchResult search(LanceDBTable* tbl) {
   // query the table using the nearest_to function
@@ -185,10 +199,10 @@ SearchResult search(LanceDBTable* tbl) {
         reinterpret_cast<FFI_ArrowSchema**>(&c_schema),
         &count_out, nullptr); result != LANCEDB_SUCCESS) {
     std::cerr << "error querying nearest to vector, error: " << lancedb_error_to_message(result) << std::endl;
-    return {nullptr, nullptr};
+    return {nullptr, nullptr, 0};
   }
   std::cout << "query returned " << count_out << " results" << std::endl;
-  return {c_arrays, c_schema};
+  return {c_arrays, c_schema, count_out};
 }
 
 void print_query_result(
@@ -246,8 +260,10 @@ int main() {
 
   auto tbl = create_table(db);
   create_index(tbl);
-  auto [c_arrays, c_schema] = search(tbl);
-  print_query_result(c_arrays, c_schema);
+  auto search_result = search(tbl);
+  print_query_result(search_result.arrays, search_result.schema);
+  lancedb_free_arrow_schema(reinterpret_cast<FFI_ArrowSchema*>(search_result.schema));
+  lancedb_free_arrow_arrays(reinterpret_cast<FFI_ArrowArray**>(search_result.arrays), search_result.count);
   if (const LanceDBError result = lancedb_table_delete(tbl, "id > 24", nullptr); result != LANCEDB_SUCCESS) {
     std::cerr << "error deleting rows from table, error: " << lancedb_error_to_message(result) << std::endl;
   } else {
