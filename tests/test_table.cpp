@@ -5,6 +5,70 @@
 
 #include "test_common.h"
 
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB Create Reader", "[table]") {
+  auto schema = create_test_schema();
+  constexpr auto row_num = 10;
+  auto batch = create_test_record_batch(row_num, 0);
+
+  SECTION("Successfully create reader") {
+    struct ArrowArray c_array;
+    struct ArrowSchema c_schema;
+
+    REQUIRE(arrow::ExportRecordBatch(*batch, &c_array, &c_schema).ok());
+
+    auto reader = lancedb_record_batch_reader_from_arrow(
+      reinterpret_cast<FFI_ArrowArray*>(&c_array),
+      reinterpret_cast<FFI_ArrowSchema*>(&c_schema));
+
+    REQUIRE(reader != nullptr);
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+    lancedb_record_batch_reader_free(reader);
+  }
+
+  SECTION("Create reader with null array") {
+    struct ArrowArray c_array;
+    struct ArrowSchema c_schema;
+
+    REQUIRE(arrow::ExportRecordBatch(*batch, &c_array, &c_schema).ok());
+
+    auto reader = lancedb_record_batch_reader_from_arrow(
+      nullptr,
+      reinterpret_cast<FFI_ArrowSchema*>(&c_schema));
+
+    REQUIRE(reader == nullptr);
+
+    // Reader creation failed, so array was not consumed - need to release it
+    if (c_array.release) {
+      c_array.release(&c_array);
+    }
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Create reader with null schema") {
+    struct ArrowArray c_array;
+    struct ArrowSchema c_schema;
+
+    REQUIRE(arrow::ExportRecordBatch(*batch, &c_array, &c_schema).ok());
+
+    auto reader = lancedb_record_batch_reader_from_arrow(
+      reinterpret_cast<FFI_ArrowArray*>(&c_array),
+      nullptr);
+
+    REQUIRE(reader == nullptr);
+
+    // array was consumed by the function (even though it failed)
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+}
+
 TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Creation", "[table]") {
   SECTION("Create empty table") {
     create_empty_table("empty_table");

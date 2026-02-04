@@ -262,7 +262,14 @@ pub unsafe extern "C" fn lancedb_record_batch_reader_from_arrow(
     array: *const arrow_array::ffi::FFI_ArrowArray,
     schema: *const arrow_schema::ffi::FFI_ArrowSchema,
 ) -> *mut LanceDBRecordBatchReader {
-    if array.is_null() || schema.is_null() {
+    if array.is_null() {
+        return ptr::null_mut();
+    }
+
+    // We need to create owned copies of the FFI structures for the conversion
+    let array_ffi = unsafe { ptr::read(array) };
+
+    if schema.is_null() {
         return ptr::null_mut();
     }
 
@@ -273,8 +280,6 @@ pub unsafe extern "C" fn lancedb_record_batch_reader_from_arrow(
     };
 
     // Import the array from C ABI and convert to RecordBatch
-    // We need to create owned copies of the FFI structures for the conversion
-    let array_ffi = unsafe { ptr::read(array) };
     let record_batch = match arrow_array::ffi::from_ffi(array_ffi, &*schema) {
         Ok(array_data) => {
             // Convert the imported array data to a StructArray, then to RecordBatch
