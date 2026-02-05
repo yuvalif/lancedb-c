@@ -24,9 +24,15 @@ else()
 endif()
 set(RUST_LIB_PATH "${RUST_TARGET_DIR}/liblancedb.so")
 
+option(BUILD_EXAMPLES "Build examples" OFF)
+option(BUILD_DOCS "Build documentation" OFF)
+option(BUILD_TESTS "Build tests" OFF)
+
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(ARROW REQUIRED arrow)
+if (BUILD_EXAMPLES OR BUILD_TESTS)
+  pkg_check_modules(ARROW REQUIRED arrow)
+endif()
 
 # rust-lib target
 add_custom_target(rust-lib
@@ -43,58 +49,58 @@ set_target_properties(lancedb PROPERTIES
 )
 add_dependencies(lancedb rust-lib)
 
-# simple example
-add_executable(simple examples/simple.cpp)
-target_link_libraries(simple
-  lancedb
-  Threads::Threads
-  ${ARROW_LIBRARIES}
-)
-target_include_directories(simple
-  PRIVATE ${ARROW_INCLUDE_DIRS}
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-target_compile_options(simple PRIVATE ${ARROW_CFLAGS_OTHER})
-set_target_properties(simple PROPERTIES
-  BUILD_RPATH ${RUST_TARGET_DIR}
-)
 
-# full example
-add_executable(full examples/full.cpp)
-target_link_libraries(full
-  lancedb
-  Threads::Threads
-  ${ARROW_LIBRARIES}
-)
-target_include_directories(full
-  PRIVATE ${ARROW_INCLUDE_DIRS}
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-target_compile_options(full PRIVATE ${ARROW_CFLAGS_OTHER})
-set_target_properties(full PROPERTIES
-  BUILD_RPATH ${RUST_TARGET_DIR}
-)
+if(BUILD_EXAMPLES)
+  # simple example
+  add_executable(simple examples/simple.cpp)
+  target_link_libraries(simple
+    lancedb
+    Threads::Threads
+    ${ARROW_LIBRARIES}
+  )
+  target_include_directories(simple
+    PRIVATE ${ARROW_INCLUDE_DIRS}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_compile_options(simple PRIVATE ${ARROW_CFLAGS_OTHER})
+  set_target_properties(simple PROPERTIES
+    BUILD_RPATH ${RUST_TARGET_DIR}
+  )
 
-# s3 storage example
-add_executable(s3 examples/s3.cpp)
-target_link_libraries(s3
-  lancedb
-  Threads::Threads
-  ${ARROW_LIBRARIES}
-)
-target_include_directories(s3
-  PRIVATE ${ARROW_INCLUDE_DIRS}
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-target_compile_options(s3 PRIVATE ${ARROW_CFLAGS_OTHER})
-set_target_properties(s3 PROPERTIES
-  BUILD_RPATH ${RUST_TARGET_DIR}
-)
+  # full example
+  add_executable(full examples/full.cpp)
+  target_link_libraries(full
+    lancedb
+    Threads::Threads
+    ${ARROW_LIBRARIES}
+  )
+  target_include_directories(full
+    PRIVATE ${ARROW_INCLUDE_DIRS}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_compile_options(full PRIVATE ${ARROW_CFLAGS_OTHER})
+  set_target_properties(full PROPERTIES
+    BUILD_RPATH ${RUST_TARGET_DIR}
+  )
 
-add_custom_target(examples DEPENDS simple full s3)
+  # s3 storage example
+  add_executable(s3 examples/s3.cpp)
+  target_link_libraries(s3
+    lancedb
+    Threads::Threads
+    ${ARROW_LIBRARIES}
+  )
+  target_include_directories(s3
+    PRIVATE ${ARROW_INCLUDE_DIRS}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_compile_options(s3 PRIVATE ${ARROW_CFLAGS_OTHER})
+  set_target_properties(s3 PROPERTIES
+    BUILD_RPATH ${RUST_TARGET_DIR}
+  )
 
-# Optional documentation
-option(BUILD_DOCS "Build documentation" OFF)
+  add_custom_target(examples DEPENDS simple full s3)
+endif()
 
 if(BUILD_DOCS)
   # Find Doxygen
@@ -141,9 +147,6 @@ if(BUILD_DOCS)
     VERBATIM
   )
 endif()
-
-# Optional test framework
-option(BUILD_TESTS "Build tests" OFF)
 
 if(BUILD_TESTS)
   # Find or fetch Catch2 v2
@@ -389,8 +392,15 @@ add_custom_target(check
 
 message(STATUS "=== LanceDB C/C++ Bindings Configuration ===")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "Rust library path: ${RUST_LIB_PATH}")
-message(STATUS "Arrow library path: ${ARROW_LIBRARIES}")
+message(STATUS "lancedb-c library path: ${RUST_LIB_PATH}")
+if (BUILD_EXAMPLES OR BUILD_TESTS)
+  message(STATUS "Arrow library: ${ARROW_LIBRARIES}")
+endif()
+if(BUILD_EXAMPLES)
+  message(STATUS "Examples: Enabled")
+else()
+  message(STATUS "Examples: Disabled (use -DBUILD_EXAMPLES=ON to enable)")
+endif()
 if(BUILD_TESTS)
   message(STATUS "Tests: Enabled")
 else()
