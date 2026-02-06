@@ -54,6 +54,7 @@ const std::string POLICY_FILE_NAME = "policy.json";
 const std::string TAGS_FILE_NAME = "tags.json";
 const std::string BUCKET_CONFIG_FILE = "bucket_config.json";
 const std::string INDEX_CONFIG_SUFFIX = "_index_config.json";
+const std::string INDEX_STATS_SUFFIX = "_index_stats.json";
 
 // ============================================================================
 // Utility Functions
@@ -227,10 +228,13 @@ public:
     static std::shared_ptr<arrow::Schema> create_vector_schema(int dimension) {
         auto key_field = arrow::field("key", arrow::utf8());
         auto data_field = arrow::field("data", arrow::fixed_size_list(arrow::float32(), dimension));
+	// TODO it is not possible to search based on metadata field 
         auto metadata_field = arrow::field("metadata", arrow::utf8());
         // Additional scalar columns for filtering
+	// TODO the following should be dynamic based on metadata configuration (the user specify these fields)
         auto function_name_field = arrow::field("function_name", arrow::utf8());
         auto class_name_field = arrow::field("class_name", arrow::utf8());
+	// TODO schema creation should be dynamic based on user request
         return arrow::schema({key_field, data_field, metadata_field, function_name_field, class_name_field});
     }
 
@@ -1079,6 +1083,8 @@ ApiResponse ListIndexes(const json& request) {
 
 // PutVectors: Adds vectors to an index
 ApiResponse PutVectors(const json& request) {
+	//note: a single request can contain up to 500 vectors
+	
     if (!request.contains("vectors") || !request["vectors"].is_array()) {
         return make_error(400, "ValidationException", "vectors array is required");
     }
@@ -1123,6 +1129,7 @@ ApiResponse PutVectors(const json& request) {
     }
 
     // Parse vectors
+    // the function_name and class_name are extracted from metadata if available
     std::vector<std::string> keys;
     std::vector<std::vector<float>> vectors;
     std::vector<std::string> metadata_list;
@@ -1177,6 +1184,7 @@ ApiResponse PutVectors(const json& request) {
         std::string class_name = "";
 
         // Try top-level first
+	// TODO it should be dynamic based on metadata configuration
         if (vec.contains("function_name") && vec["function_name"].is_string()) {
             function_name = vec["function_name"].get<std::string>();
         }
@@ -1984,25 +1992,60 @@ ApiResponse CreateVectorIndex(const json& request) {
     }
     vec_config.replace = request.value("replace", 0);
 
+    // Get current stats before creating index
+    unsigned long long row_count = lancedb_table_count_rows(table);
+    unsigned long long version_before = lancedb_table_version(table);
+
     // Create the vector index on "data" column
     const char* columns[] = {"data"};
     char* err_msg = nullptr;
     LanceDBError result = lancedb_table_create_vector_index(
         table, columns, 1, index_type, &vec_config, &err_msg);
 
-    lancedb_table_free(table);
-    lancedb_connection_free(conn);
-
     if (result != LANCEDB_SUCCESS) {
         std::string error = err_msg ? err_msg : lancedb_error_to_message(result);
         if (err_msg) lancedb_free_string(err_msg);
+        lancedb_table_free(table);
+        lancedb_connection_free(conn);
         return make_error(500, "InternalServerException", error);
     }
+
+    // Re-open table to get updated version
+    lancedb_table_free(table);
+    table = LanceDBHelper::open_table(conn, "vectors");
+    unsigned long long version_after = table ? lancedb_table_version(table) : version_before + 1;
+    if (table) lancedb_table_free(table);
+    lancedb_connection_free(conn);
+
+    // Save index build stats for GetIndexStats API
+    std::string stats_path = utils::get_metadata_path(bucket_name) + "/" +
+                            index_name + INDEX_STATS_SUFFIX;
+    json stats = {
+        {"lastVectorIndexBuild", {
+            {"timestamp", std::time(nullptr)},
+            {"version", version_after},
+            {"rowCount", row_count},
+            {"indexType", index_type_str}
+        }}
+    };
+
+    // Merge with existing stats if present
+    std::string existing_stats = utils::read_file(stats_path);
+    if (!existing_stats.empty()) {
+        try {
+            json existing = json::parse(existing_stats);
+            existing["lastVectorIndexBuild"] = stats["lastVectorIndexBuild"];
+            stats = existing;
+        } catch (...) {}
+    }
+    utils::write_file(stats_path, stats.dump(2));
 
     return make_success({
         {"message", "Vector index created successfully"},
         {"indexType", index_type_str},
-        {"column", "data"}
+        {"column", "data"},
+        {"indexedRows", row_count},
+        {"version", version_after}
     });
 }
 
@@ -2270,6 +2313,154 @@ ApiResponse ListLanceIndices(const json& request) {
     });
 }
 
+// GetIndexStats: Returns statistics about index coverage (indexed vs unindexed vectors)
+ApiResponse GetIndexStats(const json& request) {
+    if (!request.contains("indexName")) {
+        return make_error(400, "ValidationException", "indexName is required");
+    }
+    if (!request.contains("vectorBucketName") && !request.contains("indexArn")) {
+        return make_error(400, "ValidationException",
+            "Either vectorBucketName or indexArn is required");
+    }
+
+    std::string bucket_name;
+    std::string index_name = request["indexName"].get<std::string>();
+
+    if (request.contains("vectorBucketName")) {
+        bucket_name = request["vectorBucketName"].get<std::string>();
+    } else {
+        std::string arn = request["indexArn"].get<std::string>();
+        size_t bucket_pos = arn.find("vector-bucket/");
+        size_t index_pos = arn.find("/index/");
+        if (bucket_pos != std::string::npos && index_pos != std::string::npos) {
+            bucket_name = arn.substr(bucket_pos + 14, index_pos - bucket_pos - 14);
+        }
+    }
+
+    // Check index exists
+    std::string db_path = utils::get_index_db_path(bucket_name, index_name);
+    if (!utils::directory_exists(db_path)) {
+        return make_error(404, "NotFoundException",
+            "Index '" + index_name + "' not found");
+    }
+
+    // Connect to LanceDB
+    LanceDBConnection* conn = LanceDBHelper::connect(db_path);
+    if (!conn) {
+        return make_error(500, "InternalServerException",
+            "Failed to connect to index database");
+    }
+
+    LanceDBTable* table = LanceDBHelper::open_table(conn, "vectors");
+    if (!table) {
+        lancedb_connection_free(conn);
+        return make_error(500, "InternalServerException",
+            "Failed to open vectors table");
+    }
+
+    // Get current table stats
+    unsigned long long current_row_count = lancedb_table_count_rows(table);
+    unsigned long long current_version = lancedb_table_version(table);
+
+    // List indices to check if vector index exists
+    char** indices = nullptr;
+    size_t index_count = 0;
+    char* err_msg = nullptr;
+    lancedb_table_list_indices(table, &indices, &index_count, &err_msg);
+    if (err_msg) lancedb_free_string(err_msg);
+
+    bool has_vector_index = false;
+    json indices_info = json::array();
+    for (size_t i = 0; i < index_count; i++) {
+        if (indices[i]) {
+            std::string idx_name(indices[i]);
+            indices_info.push_back(idx_name);
+            // Check if this looks like a vector index (data_idx)
+            if (idx_name.find("data") != std::string::npos) {
+                has_vector_index = true;
+            }
+        }
+    }
+    if (indices) lancedb_free_index_list(indices, index_count);
+
+    lancedb_table_free(table);
+    lancedb_connection_free(conn);
+
+    // Read saved index build stats
+    std::string stats_path = utils::get_metadata_path(bucket_name) + "/" +
+                            index_name + INDEX_STATS_SUFFIX;
+    std::string stats_str = utils::read_file(stats_path);
+
+    unsigned long long indexed_rows = 0;
+    unsigned long long indexed_version = 0;
+    std::string index_type = "none";
+    long long index_build_time = 0;
+
+    if (!stats_str.empty()) {
+        try {
+            json stats = json::parse(stats_str);
+            if (stats.contains("lastVectorIndexBuild")) {
+                auto& build = stats["lastVectorIndexBuild"];
+                indexed_rows = build.value("rowCount", (unsigned long long)0);
+                indexed_version = build.value("version", (unsigned long long)0);
+                index_type = build.value("indexType", "unknown");
+                index_build_time = build.value("timestamp", (long long)0);
+            }
+        } catch (...) {}
+    }
+
+    // Calculate unindexed rows (estimate: rows added after last index build)
+    unsigned long long unindexed_rows = 0;
+    if (current_row_count > indexed_rows) {
+        unindexed_rows = current_row_count - indexed_rows;
+    }
+
+    // Calculate index coverage percentage
+    double coverage_pct = 0.0;
+    if (current_row_count > 0) {
+        coverage_pct = (double)indexed_rows / (double)current_row_count * 100.0;
+    }
+
+    // Suggest rebuild if unindexed ratio exceeds threshold
+    bool needs_rebuild = false;
+    double unindexed_ratio = 0.0;
+    if (current_row_count > 0) {
+        unindexed_ratio = (double)unindexed_rows / (double)current_row_count;
+        needs_rebuild = (unindexed_ratio > 0.20) || (!has_vector_index && current_row_count > 0);
+    }
+
+    return make_success({
+        {"indexName", index_name},
+        {"vectorBucketName", bucket_name},
+        {"currentStats", {
+            {"totalRows", current_row_count},
+            {"currentVersion", current_version},
+            {"lanceIndices", indices_info}
+        }},
+        {"vectorIndexStats", {
+            {"hasVectorIndex", has_vector_index},
+            {"indexType", index_type},
+            {"indexedRows", indexed_rows},
+            {"indexedAtVersion", indexed_version},
+            {"indexBuildTimestamp", index_build_time}
+        }},
+        {"coverage", {
+            {"indexedRows", indexed_rows},
+            {"unindexedRows", unindexed_rows},
+            {"coveragePercent", coverage_pct},
+            {"unindexedRatio", unindexed_ratio}
+        }},
+        {"recommendation", {
+            {"needsRebuild", needs_rebuild},
+            {"reason", needs_rebuild ?
+                (has_vector_index ?
+                    "More than 20% of vectors are unindexed" :
+                    "No vector index exists") :
+                "Index coverage is adequate"}
+        }}
+    });
+}
+
 // ============================================================================
 // Command Line Interface
 // ============================================================================
@@ -2310,6 +2501,7 @@ COMMANDS:
     CreateScalarIndex       Create scalar index on a column (BTREE/BITMAP)
     OptimizeIndex           Compact files and/or rebuild indices
     ListLanceIndices        List all LanceDB indices on a table
+    GetIndexStats           Get index coverage statistics (indexed vs unindexed)
 
     --help, -h              Show this help message
 
@@ -2368,6 +2560,12 @@ EXAMPLES:
 
     # List all LanceDB indices
     ./s3vector_simulation ListLanceIndices '{
+        "vectorBucketName": "my-bucket",
+        "indexName": "my-index"
+    }'
+
+    # Get index coverage statistics
+    ./s3vector_simulation GetIndexStats '{
         "vectorBucketName": "my-bucket",
         "indexName": "my-index"
     }'
@@ -2482,6 +2680,8 @@ int main(int argc, char* argv[]) {
         response = OptimizeIndex(request);
     } else if (command == "ListLanceIndices") {
         response = ListLanceIndices(request);
+    } else if (command == "GetIndexStats") {
+        response = GetIndexStats(request);
     } else {
         std::cerr << "Unknown command: " << command << std::endl;
         print_help();
