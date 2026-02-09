@@ -8,16 +8,17 @@
  *
  * This application provides a concurrent vector service that supports:
  * - Concurrent put-vector, remove-vector, and search-vector operations
- * - Synchronous index building with file-based locking (flock)
- * - Smart index rebuild triggers checked on each put/remove operation
+ * - Synchronous index building with file-based locking (flock) *NOTE* : the use of flock is for the purpose of this prototype, on s3 storage system it can be achived by s3-conditional-write.
+ * - index rebuild triggers checked on each put/remove operation
  * - LanceDB's ability to use old index + brute force on unindexed data
  *
  * Architecture:
  * - PUT/DELETE operations complete first, then check rebuild thresholds
- * - File locking (flock) ensures only one process modifies index state
+ * - File locking (flock) ensures only one process modifies index state(its very short operation) //NOTE on s3-system it needs to achieve concurrent and fast update of the index state by using s3-conditional-write or other mechanism. it needs to consider a stream of put and remove vectors. one way to achive that is by "lazy" updates of the index state, which means we can allow some level of inconsistency in the index state for a short period of time, and we can update the index state asynchronously in the background. this way we can avoid the contention on the index state update and achieve better performance.
+ * - index state is a json file that tracks the index state for each table, it contains the number of unindexed vectors, number of deleted vectors, the version of the last build and other details.
  * - If rebuild is needed, the process runs the build synchronously
  * - Search operations are lock-free (use LanceDB manifest for consistency)
- * - Crash detection via builder PID tracking
+ * - Crash detection via builder PID tracking(its for this prototype only)
  *
  * Index Rebuild Triggers (checked on each put/remove):
  * - Insertion threshold: when unindexed vector count exceeds threshold
