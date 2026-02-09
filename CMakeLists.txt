@@ -35,7 +35,7 @@ if (BUILD_EXAMPLES OR BUILD_TESTS)
 endif()
 
 # rust-lib target
-add_custom_target(rust-lib
+add_custom_target(rust-lib ALL
   COMMAND cargo build ${RUST_BUILD_TYPE}
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   COMMENT "Building Rust library..."
