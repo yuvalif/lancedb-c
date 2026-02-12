@@ -16,13 +16,21 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(RUST_TARGET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/target/debug")
+  set(RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/target/debug")
   set(RUST_BUILD_TYPE "")
 else()
-  set(RUST_TARGET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/target/release")
+  set(RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/target/release")
   set(RUST_BUILD_TYPE "--release")
 endif()
-set(RUST_LIB_PATH "${RUST_TARGET_DIR}/liblancedb.so")
+set(STATIC_LIB_PATH "${RUST_TARGET_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}lancedb${CMAKE_STATIC_LIBRARY_SUFFIX}")
+if(WIN32)
+  set(SHARED_LIB_PATH "${RUST_TARGET_DIR}/lancedb${CMAKE_SHARED_LIBRARY_SUFFIX}")
+  set(IMPORT_LIB_PATH "${RUST_TARGET_DIR}/${CMAKE_IMPORT_LIBRARY_PREFIX}lancedb${CMAKE_IMPORT_LIBRARY_SUFFIX}")
+  set(LANCEDB_LIB_PATHS "${STATIC_LIB_PATH}" "${SHARED_LIB_PATH}" "${IMPORT_LIB_PATH}")
+else()
+  set(SHARED_LIB_PATH "${RUST_TARGET_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}lancedb${CMAKE_SHARED_LIBRARY_SUFFIX}")
+  set(LANCEDB_LIB_PATHS "${STATIC_LIB_PATH}" "${SHARED_LIB_PATH}")
+endif()
 
 option(BUILD_EXAMPLES "Build examples" OFF)
 option(BUILD_DOCS "Build documentation" OFF)
@@ -36,16 +44,17 @@ endif()
 
 # rust-lib target
 add_custom_target(rust-lib ALL
-  COMMAND cargo build ${RUST_BUILD_TYPE}
+  COMMAND cargo build ${RUST_BUILD_TYPE} --target-dir "${CMAKE_BINARY_DIR}/target"
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   COMMENT "Building Rust library..."
-  BYPRODUCTS ${RUST_LIB_PATH}
+  BYPRODUCTS ${LANCEDB_LIB_PATHS}
 )
 
 # lancedb target
 add_library(lancedb SHARED IMPORTED)
 set_target_properties(lancedb PROPERTIES
-  IMPORTED_LOCATION ${RUST_LIB_PATH}
+  IMPORTED_LOCATION "${SHARED_LIB_PATH}"
+  IMPORTED_IMPLIB "${IMPORT_LIB_PATH}"
 )
 add_dependencies(lancedb rust-lib)
 
@@ -377,7 +386,7 @@ endif()
 
 add_custom_target(clean-all
   COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target clean
-  COMMAND cargo clean
+  COMMAND cargo clean --target-dir "${CMAKE_BINARY_DIR}/target"
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   COMMENT "Cleaning all build artifacts..."
 )
@@ -390,9 +399,18 @@ add_custom_target(check
   COMMENT "Running Rust formatting and linting checks..."
 )
 
+# Install
+if(WIN32)
+  install(FILES "${SHARED_LIB_PATH}" DESTINATION bin)
+  install(FILES "${STATIC_LIB_PATH}" "${IMPORT_LIB_PATH}" DESTINATION lib)
+else()
+  install(FILES ${LANCEDB_LIB_PATHS} DESTINATION lib)
+endif()
+install(DIRECTORY include/ DESTINATION include)
+
 message(STATUS "=== LanceDB C/C++ Bindings Configuration ===")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "lancedb-c library path: ${RUST_LIB_PATH}")
+message(STATUS "lancedb-c library paths: ${LANCEDB_LIB_PATHS}")
 if (BUILD_EXAMPLES OR BUILD_TESTS)
   message(STATUS "Arrow library: ${ARROW_LIBRARIES}")
 endif()
