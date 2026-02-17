@@ -37,9 +37,9 @@ option(BUILD_DOCS "Build documentation" OFF)
 option(BUILD_TESTS "Build tests" OFF)
 
 find_package(Threads REQUIRED)
-find_package(PkgConfig REQUIRED)
 if (BUILD_EXAMPLES OR BUILD_TESTS)
-  pkg_check_modules(ARROW REQUIRED arrow)
+  find_package(Arrow REQUIRED)
+  set(ARROW_LIBRARIES Arrow::arrow_shared)
 endif()
 
 # rust-lib target

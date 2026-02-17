@@ -6,7 +6,6 @@
 #pragma once
 
 #include <catch2/catch.hpp>
-#include <sys/stat.h>
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include "lancedb.h"
