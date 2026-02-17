@@ -8,7 +8,12 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -16,12 +21,14 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ matrix.os == 'windows-latest' && 'stable-x86_64-pc-windows-gnu' || 'stable' }}
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Install dependencies
+      - name: Install dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config lsb-release wget valgrind
@@ -30,17 +37,57 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libarrow-dev
 
+      - name: Install dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install apache-arrow
+
+      - uses: msys2/setup-msys2@v2
+        if: matrix.os == 'windows-latest'
+        with:
+          path-type: inherit
+          install: mingw-w64-x86_64-arrow mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-toolchain mingw-w64-x86_64-protobuf
+
       - name: Configure CMake
+        if: matrix.os != 'windows-latest'
         run: |
           mkdir -p build
           cd build
           cmake .. -G Ninja -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
+        if: matrix.os != 'windows-latest'
         run: ninja -C build
 
       - name: Check
+        if: matrix.os != 'windows-latest'
         run: ninja -C build check
 
       - name: Test
-        run: ctest --test-dir build -j $(nproc)
+        if: matrix.os != 'windows-latest'
+        run: ctest --test-dir build -j
+
+      - name: Configure CMake (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: msys2 {0}
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -G Ninja -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: msys2 {0}
+        run: ninja -C build
+
+      - name: Check (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: msys2 {0}
+        run: ninja -C build check
+
+      - name: Test (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: msys2 {0}
+        run: |
+          export PATH=$PATH:$GITHUB_WORKSPACE/build/target/release
+          ctest --test-dir build -j

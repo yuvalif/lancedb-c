@@ -3,7 +3,7 @@
  * SPDX-FileCopyrightText: Copyright The LanceDB Authors
  */
 
-#include <sys/stat.h>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -13,15 +13,12 @@
 
 // helper function to check if directory exists
 int directory_exists(const char* path) {
-  struct stat st;
-  return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+  return std::filesystem::is_directory(path);
 }
 
 // helper function to remove directory recursively
 int remove_directory(const char* path) {
-  char command[256];
-  snprintf(command, sizeof(command), "rm -rf %s", path);
-  return system(command);
+  return std::filesystem::remove_all(path) ? 0 : 1;
 }
 
 constexpr size_t DIM = 128;

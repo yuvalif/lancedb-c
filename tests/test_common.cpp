@@ -3,19 +3,17 @@
  * SPDX-FileCopyrightText: Copyright The LanceDB Authors
  */
 
+#include <filesystem>
 #include "test_common.h"
 
 // Helper function to check if directory exists
 int directory_exists(const char* path) {
-  struct stat st;
-  return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+  return std::filesystem::is_directory(path);
 }
 
 // Helper function to remove directory recursively
 int remove_directory(const char* path) {
-  char command[256];
-  snprintf(command, sizeof(command), "rm -rf %s", path);
-  return system(command);
+  return std::filesystem::remove_all(path) ? 0 : 1;
 }
 
 void LanceDBFixture::create_empty_table(const std::string& table_name) {
