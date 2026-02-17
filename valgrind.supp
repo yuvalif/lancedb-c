@@ -24,3 +24,14 @@
    ...
    obj:*/liblancedb.so
 }
+
+# known glibc internal allocation in the DNS resolver
+{
+   glibc-resolver-cache
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   fun:__libc_alloc_buffer_allocate
+   fun:alloc_buffer_allocate
+   fun:__resolv_conf_allocate
+}

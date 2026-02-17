@@ -138,6 +138,9 @@ int main() {
         nullptr, &table, nullptr); result != LANCEDB_SUCCESS) {
     std::cerr << "error creating table: " << table_name << ", error: " << lancedb_error_to_message(result) << std::endl;
     lancedb_connection_free(db);
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
     return 1;
   }
   std::cout << "created table: " << table_name << " (empty)" << std::endl;
@@ -167,6 +170,10 @@ int main() {
   } else {
     std::cerr << "created table with invalid name - should have failed" << std::endl;
     lancedb_table_free(table);
+  }
+
+  if (c_schema.release) {
+    c_schema.release(&c_schema);
   }
 
   // try to create a table with invalid input (null schema)
@@ -272,6 +279,10 @@ int main() {
     }
   }
 
+  if (c_schema.release) {
+    c_schema.release(&c_schema);
+  }
+
   // define a vector index on the "data" column
   const char* data_columns[] = {"data"};
   LanceDBVectorIndexConfig vector_config = {
@@ -330,6 +341,8 @@ int main() {
   } else {
     std::cout << "query returned " << count_out << " results" << std::endl;
     print_query_result(c_arrays_ptr, c_schema_ptr);
+    lancedb_free_arrow_arrays(reinterpret_cast<FFI_ArrowArray**>(c_arrays_ptr), count_out);
+    lancedb_free_arrow_schema(reinterpret_cast<FFI_ArrowSchema*>(c_schema_ptr));
   }
 
   // query the table using query object
@@ -524,6 +537,7 @@ int main() {
                   &config,
                   &error_message); result != LANCEDB_SUCCESS) {
               std::cerr << "failed to upsert record batch to table, error: " << lancedb_error_to_message(result) << ", message: " << error_message << std::endl;
+              lancedb_free_string(error_message);
             } else {
               std::cout << "upserted " << num_rows << " rows to table" << std::endl;
             }
@@ -533,6 +547,10 @@ int main() {
               c_array.release(&c_array);
             }
           }
+        }
+
+        if (c_schema.release) {
+          c_schema.release(&c_schema);
         }
 
         // check number of rows in the table after upsert
@@ -550,10 +568,6 @@ int main() {
         std::cerr << "error opening table: " << table_names[i] << std::endl;
       }
     }
-  }
-
-  if (c_schema.release) {
-    c_schema.release(&c_schema);
   }
 
   lancedb_free_table_names(table_names, name_count);
