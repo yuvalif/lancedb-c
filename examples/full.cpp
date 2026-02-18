@@ -253,9 +253,11 @@ int main() {
   if (const auto status = arrow::ExportRecordBatch(*record_batch, &c_array, &c_schema); !status.ok()) {
     std::cerr << "failed to export record batch to C ABI: " << status.ToString() << std::endl;
   } else {
-    if (auto batch_reader = lancedb_record_batch_reader_from_arrow(
+    LanceDBRecordBatchReader* batch_reader;
+    if (const LanceDBError error = lancedb_record_batch_reader_from_arrow(
           reinterpret_cast<FFI_ArrowArray*>(&c_array),
-          reinterpret_cast<FFI_ArrowSchema*>(&c_schema)); batch_reader) {
+          reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+          &batch_reader, nullptr); error == LANCEDB_SUCCESS) {
       // add data to table
       if (const LanceDBError result = lancedb_table_add(tbl, batch_reader, nullptr); result != LANCEDB_SUCCESS) {
         std::cerr << "failed to write record batch to table, error: " << lancedb_error_to_message(result) << std::endl;
@@ -264,7 +266,9 @@ int main() {
       }
     } else {
       std::cerr << "failed to create record batch reader from arrow arrays" << std::endl;
-      lancedb_record_batch_reader_free(batch_reader);
+      if (c_array.release) {
+        c_array.release(&c_array);
+      }
     }
   }
 
@@ -502,9 +506,11 @@ int main() {
         if (const auto status = arrow::ExportRecordBatch(*record_batch, &c_array, &c_schema); !status.ok()) {
           std::cerr << "failed to export record batch to C ABI: " << status.ToString() << std::endl;
         } else {
-          if (auto batch_reader = lancedb_record_batch_reader_from_arrow(
+          LanceDBRecordBatchReader* batch_reader;
+          if (const LanceDBError error = lancedb_record_batch_reader_from_arrow(
                 reinterpret_cast<FFI_ArrowArray*>(&c_array),
-                reinterpret_cast<FFI_ArrowSchema*>(&c_schema)); batch_reader) {
+                reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+                &batch_reader, nullptr); error == LANCEDB_SUCCESS) {
             // upsert the new data to table
             std::array<const char*, 1> on_columns = {"key"};
             //
@@ -523,7 +529,9 @@ int main() {
             }
           } else {
             std::cerr << "failed to create record batch reader from arrow arrays" << std::endl;
-            lancedb_record_batch_reader_free(batch_reader);
+            if (c_array.release) {
+              c_array.release(&c_array);
+            }
           }
         }
 

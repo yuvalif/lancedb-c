@@ -563,3 +563,122 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Merge Insert", "[table]") {
   lancedb_table_free(table);
 }
 
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB Create Reader", "[table]") {
+  constexpr auto row_num = 10;
+  auto batch = create_test_record_batch(row_num, 0);
+
+  SECTION("Successfully create reader") {
+    struct ArrowArray c_array;
+    struct ArrowSchema c_schema;
+
+    REQUIRE(arrow::ExportRecordBatch(*batch, &c_array, &c_schema).ok());
+
+    LanceDBRecordBatchReader* reader = nullptr;
+    char* error_message = nullptr;
+    // We expect success here
+    LanceDBError result = lancedb_record_batch_reader_from_arrow(
+      reinterpret_cast<FFI_ArrowArray*>(&c_array),
+      reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+      &reader,
+      &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(reader);
+    REQUIRE(error_message == nullptr);
+
+    // According to docs/code: Schema is only read by the function, so we must release it.
+    // The array IS CONSUMED by definition of the function (though technically checked early before consumption, if success occurs, array is consumed).
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+
+    // We must free the reader
+    lancedb_record_batch_reader_free(reader);
+  }
+
+  SECTION("Create reader with null array") {
+    struct ArrowArray c_array;
+    struct ArrowSchema c_schema;
+
+    REQUIRE(arrow::ExportRecordBatch(*batch, &c_array, &c_schema).ok());
+
+    LanceDBRecordBatchReader* reader = nullptr;
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_record_batch_reader_from_arrow(
+      nullptr,
+      reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+      &reader,
+      &error_message);
+
+    REQUIRE(result == LANCEDB_INVALID_ARGUMENT);
+    REQUIRE(reader == nullptr);
+    REQUIRE(error_message);
+
+    lancedb_free_string(error_message);
+
+    // Since it failed early (null check), array was not consumed.
+    if (c_array.release) {
+      c_array.release(&c_array);
+    }
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Create reader with null schema") {
+    struct ArrowArray c_array;
+    struct ArrowSchema c_schema;
+
+    REQUIRE(arrow::ExportRecordBatch(*batch, &c_array, &c_schema).ok());
+
+    LanceDBRecordBatchReader* reader = nullptr;
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_record_batch_reader_from_arrow(
+      reinterpret_cast<FFI_ArrowArray*>(&c_array),
+      nullptr,
+      &reader,
+      &error_message);
+
+    REQUIRE(result == LANCEDB_INVALID_ARGUMENT);
+    REQUIRE(reader == nullptr);
+    REQUIRE(error_message);
+
+    lancedb_free_string(error_message);
+
+    // Since it failed early, array was not consumed.
+    if (c_array.release) {
+      c_array.release(&c_array);
+    }
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Create reader with null output pointer") {
+    struct ArrowArray c_array;
+    struct ArrowSchema c_schema;
+
+    REQUIRE(arrow::ExportRecordBatch(*batch, &c_array, &c_schema).ok());
+
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_record_batch_reader_from_arrow(
+      reinterpret_cast<FFI_ArrowArray*>(&c_array),
+      reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+      nullptr,
+      &error_message);
+
+    REQUIRE(result == LANCEDB_INVALID_ARGUMENT);
+    REQUIRE(error_message);
+
+    lancedb_free_string(error_message);
+
+    // Since it failed early, array was not consumed.
+    if (c_array.release) {
+      c_array.release(&c_array);
+    }
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+}
+

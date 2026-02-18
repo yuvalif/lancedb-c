@@ -73,11 +73,15 @@ LanceDBTable* create_table(LanceDBConnection* db) {
     return nullptr;
   }
 
-  LanceDBRecordBatchReader* reader = lancedb_record_batch_reader_from_arrow(
+  LanceDBRecordBatchReader* reader;
+  if (const LanceDBError result = lancedb_record_batch_reader_from_arrow(
       reinterpret_cast<FFI_ArrowArray*>(&c_array),
-      reinterpret_cast<FFI_ArrowSchema*>(&c_schema));
-  if (!reader) {
+      reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+      &reader, nullptr); result != LANCEDB_SUCCESS) {
     std::cerr << "failed to create record batch reader from arrow arrays" << std::endl;
+    if (c_array.release) {
+      c_array.release(&c_array);
+    }
     return nullptr;
   }
 
@@ -98,10 +102,10 @@ LanceDBTable* create_table(LanceDBConnection* db) {
     return nullptr;
   }
 
-  reader = lancedb_record_batch_reader_from_arrow(
+  if (const LanceDBError result = lancedb_record_batch_reader_from_arrow(
       reinterpret_cast<FFI_ArrowArray*>(&c_array),
-      reinterpret_cast<FFI_ArrowSchema*>(&c_schema));
-  if (!reader) {
+      reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+      &reader, nullptr); result != LANCEDB_SUCCESS) {
     std::cerr << "failed to create record batch reader from arrow arrays" << std::endl;
     if (c_array.release) {
       c_array.release(&c_array);
