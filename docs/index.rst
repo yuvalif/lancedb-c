@@ -91,17 +91,31 @@ This example shows how to create a LanceDB table with vector data using Apache A
 
 .. code-block:: c
 
+   LanceDBError result;
+   char* error_message = NULL;
+
    // Create reader from Arrow C ABI
-   LanceDBRecordBatchReader* reader = lancedb_record_batch_reader_from_arrow(
+   LanceDBRecordBatchReader* reader;
+
+   result = lancedb_record_batch_reader_from_arrow(
        (FFI_ArrowArray*)&c_array,
-       (FFI_ArrowSchema*)&c_schema
+       (FFI_ArrowSchema*)&c_schema,
+       &reader,
+       &error_message
    );
+
+   if (result != LANCEDB_SUCCESS) {
+       fprintf(stderr, "Error: %s\n", error_message);
+       lancedb_free_string(error_message);
+       if (c_array.release) {
+         c_array.release(&c_array);
+       }
+   }
 
    // Create table
    LanceDBTable* table;
-   char* error_message = NULL;
 
-   LanceDBError result = lancedb_table_create(
+   result = lancedb_table_create(
        db,
        "my_vectors",
        (FFI_ArrowSchema*)&c_schema,

@@ -1059,17 +1059,22 @@ LanceDBError lancedb_table_nearest_to(
  *
  * @param array - pointer to FFI_ArrowArray containing record batch data
  * @param schema - pointer to FFI_ArrowSchema containing the schema
- * @return Pointer to LanceDBRecordBatchReader on success, NULL on failure
+ * @param reader_out - pointer to receive the created reader
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Error code indicating success or failure
  *
  * This function consumes the array according to Arrow C ABI specification.
  * The caller should NOT call the array's release function after passing it here.
  * The schema is only read and should still be released by the caller.
  * The caller is responsible for freeing the returned reader with
- * lancedb_record_batch_reader_free().
+ * lancedb_record_batch_reader_free(). If error_message is provided and an error
+ * occurs, the caller must free the error message with lancedb_free_string().
  */
-LanceDBRecordBatchReader* lancedb_record_batch_reader_from_arrow(
+LanceDBError lancedb_record_batch_reader_from_arrow(
     const struct FFI_ArrowArray* array,
-    const struct FFI_ArrowSchema* schema
+    const struct FFI_ArrowSchema* schema,
+    LanceDBRecordBatchReader** reader_out,
+    char** error_message
 );
 
 /**

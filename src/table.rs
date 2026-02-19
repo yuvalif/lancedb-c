@@ -253,23 +253,30 @@ pub unsafe extern "C" fn lancedb_table_restore_version(
 /// # Safety
 /// - `array` must be a valid pointer to FFI_ArrowArray containing the record batch data
 /// - `schema` must be a valid pointer to FFI_ArrowSchema containing the schema
+/// - `reader_out` must be a valid pointer to receive the created reader
+/// - `error_message` can be NULL to ignore detailed error messages
 /// - The caller is responsible for ensuring the array and schema are properly formatted
 ///
 /// # Returns
-/// - Pointer to LanceDBRecordBatchReader wrapper, or NULL on failure
+/// - Error code indicating success or failure
 #[no_mangle]
 pub unsafe extern "C" fn lancedb_record_batch_reader_from_arrow(
     array: *const arrow_array::ffi::FFI_ArrowArray,
     schema: *const arrow_schema::ffi::FFI_ArrowSchema,
-) -> *mut LanceDBRecordBatchReader {
-    if array.is_null() || schema.is_null() {
-        return ptr::null_mut();
+    reader_out: *mut *mut LanceDBRecordBatchReader,
+    error_message: *mut *mut c_char,
+) -> LanceDBError {
+    if array.is_null() || schema.is_null() || reader_out.is_null() {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
     }
 
     // Import the schema from C ABI
     let imported_schema = match Schema::try_from(&*schema) {
         Ok(schema) => std::sync::Arc::new(schema),
-        Err(_) => return ptr::null_mut(),
+        Err(e) => {
+            return handle_error(&lancedb::error::Error::Arrow { source: e }, error_message);
+        }
     };
 
     // Import the array from C ABI and convert to RecordBatch
@@ -281,7 +288,9 @@ pub unsafe extern "C" fn lancedb_record_batch_reader_from_arrow(
             let struct_array = StructArray::from(array_data);
             RecordBatch::from(&struct_array)
         }
-        Err(_) => return ptr::null_mut(),
+        Err(e) => {
+            return handle_error(&lancedb::error::Error::Arrow { source: e }, error_message);
+        }
     };
 
     // Note: According to Arrow C ABI specification, this function consumes the array.
@@ -321,7 +330,8 @@ pub unsafe extern "C" fn lancedb_record_batch_reader_from_arrow(
 
     let wrapper = Box::new(LanceDBRecordBatchReader::new(Box::new(reader)));
 
-    Box::into_raw(wrapper)
+    *reader_out = Box::into_raw(wrapper);
+    LanceDBError::Success
 }
 
 /// Free a RecordBatchReader wrapper
