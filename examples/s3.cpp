@@ -31,7 +31,7 @@ LanceDBTable* create_empty_table(LanceDBConnection* db) {
 
   // create an empty table based on the schema
   const std::string table_name = "empty_table";
-  LanceDBTable* tbl;
+  LanceDBTable* tbl = nullptr;
   char* error_message = nullptr;
   if (const LanceDBError result = lancedb_table_create(db, table_name.c_str(),
         reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
@@ -39,9 +39,12 @@ LanceDBTable* create_empty_table(LanceDBConnection* db) {
     std::cerr << "error creating table: " << table_name << ", error: " << error_message << std::endl;
     lancedb_connection_free(db);
     lancedb_free_string(error_message);
-    return nullptr;
+  } else {
+    std::cout << "created table: " << table_name << " (empty)" << std::endl;
   }
-  std::cout << "created table: " << table_name << " (empty)" << std::endl;
+  if (c_schema.release) {
+    c_schema.release(&c_schema);
+  }
   return tbl;
 }
 

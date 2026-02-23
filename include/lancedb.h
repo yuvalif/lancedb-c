@@ -544,6 +544,8 @@ void lancedb_table_free(LanceDBTable* table);
  * @return Error code indicating success or failure
  *
  * The caller is responsible for freeing the returned table with lancedb_table_free().
+ * This function takes ownership of the reader (when not NULL) and frees it automatically.
+ * Do NOT call lancedb_record_batch_reader_free() after calling this function.
  * If error_message is provided and an error occurs, the caller must free
  * the error message with lancedb_free_string().
  */
