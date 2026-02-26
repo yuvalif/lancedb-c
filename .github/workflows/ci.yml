@@ -31,7 +31,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config lsb-release wget valgrind
+          sudo apt-get install -y lsb-release valgrind
           wget https://apache.jfrog.io/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
           sudo apt-get install -y ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
           sudo apt-get update
@@ -92,3 +92,78 @@ jobs:
         run: |
           export PATH=$PATH:$GITHUB_WORKSPACE/build/target/release
           ctest --test-dir build -j
+
+  cross_compile:
+    name: Cross-compile Windows on Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '4.1'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 protobuf-compiler
+
+      - name: Create toolchain file
+        run: |
+          cat <<EOF > toolchain.cmake
+          set(CMAKE_SYSTEM_NAME Windows)
+          set(CMAKE_SYSTEM_PROCESSOR x86_64)
+          set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc-posix)
+          set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++-posix)
+          set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          EOF
+
+      - name: Cache Arrow
+        id: cache-arrow
+        uses: actions/cache@v4
+        with:
+          path: arrow-install
+          key: ${{ runner.os }}-mingw-arrow-22.0.0
+
+      - name: Build Arrow
+        if: steps.cache-arrow.outputs.cache-hit != 'true'
+        run: |
+          wget https://archive.apache.org/dist/arrow/arrow-22.0.0/apache-arrow-22.0.0.tar.gz
+          tar xzf apache-arrow-22.0.0.tar.gz
+          mkdir -p arrow-install
+          cd apache-arrow-22.0.0/cpp
+          mkdir -p build && cd build
+          cmake .. -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/toolchain.cmake \
+            -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/arrow-install \
+            -DARROW_BUILD_SHARED=OFF \
+            -DARROW_BUILD_STATIC=ON \
+            -DARROW_WITH_RE2=OFF \
+            -DARROW_WITH_UTF8PROC=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          ninja install
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/toolchain.cmake \
+            -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/arrow-install \
+            -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: ninja -C build

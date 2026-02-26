@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.25)
 project(lancedb-c VERSION 0.21.2)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -15,11 +15,58 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
 
+if(CMAKE_CROSSCOMPILING AND NOT RUST_TARGET_TRIPLE)
+  # Map CMake compiler architecture and platform to the corresponding Rust target triple.
+  # Note: CMAKE_C_COMPILER_ARCHITECTURE_ID requires CMake 3.10+, with expanded support in 4.1+.
+  if(WIN32)
+    if(CMAKE_C_COMPILER_ARCHITECTURE_ID STREQUAL "x64" OR CMAKE_C_COMPILER_ARCHITECTURE_ID STREQUAL "x86_64")
+      if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        set(RUST_TARGET_TRIPLE "x86_64-pc-windows-gnu")
+      elseif(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+        set(RUST_TARGET_TRIPLE "x86_64-pc-windows-gnullvm")
+      elseif(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+        set(RUST_TARGET_TRIPLE "x86_64-pc-windows-msvc")
+      endif()
+    endif()
+  elseif(APPLE)
+    if(CMAKE_C_COMPILER_ARCHITECTURE_ID STREQUAL "x86_64")
+      set(RUST_TARGET_TRIPLE "x86_64-apple-darwin")
+    elseif(CMAKE_C_COMPILER_ARCHITECTURE_ID STREQUAL "arm64")
+      set(RUST_TARGET_TRIPLE "aarch64-apple-darwin")
+    endif()
+  elseif(LINUX)
+    if(CMAKE_C_COMPILER_ARCHITECTURE_ID STREQUAL "x86_64")
+      set(RUST_TARGET_TRIPLE "x86_64-unknown-linux-gnu")
+    elseif(CMAKE_C_COMPILER_ARCHITECTURE_ID STREQUAL "aarch64")
+      set(RUST_TARGET_TRIPLE "aarch64-unknown-linux-gnu")
+    endif()
+  endif()
+
+  if(RUST_TARGET_TRIPLE)
+    message(STATUS "Cross-compiling: Automatically detected Rust target triple.")
+  else()
+    message(FATAL_ERROR "Cross-compiling: Failed to detect Rust target triple. Please set RUST_TARGET_TRIPLE manually.")
+  endif()
+endif()
+
+set(RUST_TARGET_DIR target)
+
+if(RUST_TARGET_TRIPLE)
+  set(RUST_TARGET_DIR "${RUST_TARGET_DIR}/${RUST_TARGET_TRIPLE}")
+  set(RUST_TARGET_OPT --target ${RUST_TARGET_TRIPLE})
+else()
+  execute_process(
+    COMMAND rustc --print host-tuple
+    OUTPUT_VARIABLE RUST_TARGET_TRIPLE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+endif()
+
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/target/debug")
+  set(RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/${RUST_TARGET_DIR}/debug")
   set(RUST_BUILD_TYPE "")
 else()
-  set(RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/target/release")
+  set(RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/${RUST_TARGET_DIR}/release")
   set(RUST_BUILD_TYPE "--release")
 endif()
 set(STATIC_LIB_PATH "${RUST_TARGET_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}lancedb${CMAKE_STATIC_LIBRARY_SUFFIX}")
@@ -73,7 +120,7 @@ if (BUILD_EXAMPLES OR BUILD_TESTS)
 endif()
 
 # rust-lib target
-set(CARGO_BUILD_COMMAND cargo build ${RUST_BUILD_TYPE} --target-dir "${CMAKE_BINARY_DIR}/target")
+set(CARGO_BUILD_COMMAND cargo build ${RUST_BUILD_TYPE} ${RUST_TARGET_OPT} --target-dir "${CMAKE_BINARY_DIR}/target")
 if(BUILD_COVERAGE)
   set(CARGO_BUILD_COMMAND ${CMAKE_COMMAND} -E env "RUSTFLAGS=-C instrument-coverage" ${CARGO_BUILD_COMMAND})
 endif()
@@ -519,6 +566,7 @@ install(DIRECTORY include/ DESTINATION include)
 
 message(STATUS "=== LanceDB C/C++ Bindings Configuration ===")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "Rust target triple: ${RUST_TARGET_TRIPLE}")
 message(STATUS "lancedb-c library paths: ${LANCEDB_LIB_PATHS}")
 if (BUILD_EXAMPLES OR BUILD_TESTS)
   message(STATUS "Arrow library: ${ARROW_LIBRARIES}")
