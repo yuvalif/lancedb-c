@@ -11,14 +11,22 @@ use std::sync::OnceLock;
 
 use arrow_array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use arrow_schema::Schema;
-use lancedb::connection::{connect, ConnectBuilder, Connection, TableNamesBuilder};
+use lancedb::connection::{
+    connect, ConnectBuilder, Connection, CreateTableBuilder, TableNamesBuilder,
+};
 use lancedb::database::{CreateNamespaceRequest, DropNamespaceRequest, ListNamespacesRequest};
 use lancedb::Table;
+
+use lance::dataset::{WriteMode, WriteParams};
+use lance_file::version::LanceFileVersion;
+use lancedb::table::WriteOptions;
 
 use crate::error::{
     handle_error, set_invalid_argument_message, set_unknown_error_message, LanceDBError,
 };
-use crate::types::LanceDBRecordBatchReader;
+use crate::types::{
+    LanceDBDataStorageVersion, LanceDBRecordBatchReader, LanceDBWriteMode, LanceDBWriteOptions,
+};
 
 /// Opaque handle to a ConnectBuilder
 #[repr(C)]
@@ -44,6 +52,12 @@ pub struct LanceDBTable {
 #[repr(C)]
 pub struct LanceDBTableNamesBuilder {
     inner: Box<TableNamesBuilder>,
+}
+
+/// Opaque handle to a CreateTableBuilder
+#[repr(C)]
+pub struct LanceDBCreateTableBuilder {
+    inner: Box<CreateTableBuilder<true>>,
 }
 
 /// Runtime to handle async operations
@@ -267,6 +281,210 @@ pub unsafe extern "C" fn lancedb_table_create(
             LanceDBError::Success
         }
         Err(e) => handle_error(&e, error_message),
+    }
+}
+
+/// Create a CreateTableBuilder for the given connection, table name, schema, and data
+///
+/// # Safety
+/// - `connection` must be a valid pointer returned from `lancedb_connect_builder_execute`
+/// - `table_name` must be a valid null-terminated C string
+/// - `schema_ptr` must be a valid pointer to Arrow C ABI schema
+/// - `reader` must be a valid pointer to LanceDBRecordBatchReader or NULL for empty table
+///
+/// # Returns
+/// - Non-null pointer to LanceDBCreateTableBuilder on success
+/// - Null pointer on failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_connection_create_table_builder(
+    connection: *const LanceDBConnection,
+    table_name: *const c_char,
+    schema_ptr: *const arrow_schema::ffi::FFI_ArrowSchema,
+    reader: *mut LanceDBRecordBatchReader,
+) -> *mut LanceDBCreateTableBuilder {
+    // Consume the reader first so it is freed even on error
+    let owned_reader = if reader.is_null() {
+        None
+    } else {
+        Some(Box::from_raw(reader).into_inner())
+    };
+
+    if connection.is_null() || table_name.is_null() || schema_ptr.is_null() {
+        return ptr::null_mut();
+    }
+
+    let Ok(table_name_str) = CStr::from_ptr(table_name).to_str() else {
+        return ptr::null_mut();
+    };
+
+    // Import schema from Arrow C ABI
+    let schema = match Schema::try_from(&*schema_ptr) {
+        Ok(s) => Arc::new(s),
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let batch_reader: Box<dyn RecordBatchReader + Send> = match owned_reader {
+        Some(r) => r,
+        None => {
+            let empty_batches = RecordBatchIterator::new(
+                std::iter::empty::<Result<RecordBatch, arrow::error::ArrowError>>(),
+                schema.clone(),
+            );
+            Box::new(empty_batches)
+        }
+    };
+
+    let conn = &(*connection).inner;
+    let create_builder = conn.create_table(table_name_str, batch_reader);
+
+    let boxed_builder = Box::new(LanceDBCreateTableBuilder {
+        inner: Box::new(create_builder),
+    });
+
+    Box::into_raw(boxed_builder)
+}
+
+/// Set write options on a CreateTableBuilder
+///
+/// # Safety
+/// - `builder` must be a valid pointer returned from `lancedb_connection_create_table_builder`
+/// - `builder` will be consumed and must not be used after calling this function
+/// - `write_options` must be a valid pointer to LanceDBWriteOptions
+///
+/// # Returns
+/// - A new pointer to LanceDBCreateTableBuilder on success
+/// - Null pointer on failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_create_table_builder_write_options(
+    builder: *mut LanceDBCreateTableBuilder,
+    write_options: *const LanceDBWriteOptions,
+) -> *mut LanceDBCreateTableBuilder {
+    if builder.is_null() {
+        return ptr::null_mut();
+    }
+
+    let builder_box = Box::from_raw(builder);
+
+    if write_options.is_null() {
+        return ptr::null_mut();
+    }
+    let c_opts = &*write_options;
+
+    // Convert C write options to Rust WriteOptions
+    let data_storage_version = match c_opts.data_storage_version {
+        LanceDBDataStorageVersion::None => None,
+        LanceDBDataStorageVersion::Legacy => Some(LanceFileVersion::Legacy),
+        LanceDBDataStorageVersion::V2_0 => Some(LanceFileVersion::V2_0),
+        LanceDBDataStorageVersion::Stable => Some(LanceFileVersion::Stable),
+        LanceDBDataStorageVersion::V2_1 => Some(LanceFileVersion::V2_1),
+        LanceDBDataStorageVersion::Next => Some(LanceFileVersion::Next),
+        LanceDBDataStorageVersion::V2_2 => Some(LanceFileVersion::V2_2),
+    };
+
+    let params = WriteParams {
+        max_rows_per_file: c_opts.max_rows_per_file as usize,
+        max_rows_per_group: c_opts.max_rows_per_group as usize,
+        max_bytes_per_file: c_opts.max_bytes_per_file as usize,
+        mode: match c_opts.mode {
+            LanceDBWriteMode::Create => WriteMode::Create,
+            LanceDBWriteMode::Append => WriteMode::Append,
+            LanceDBWriteMode::Overwrite => WriteMode::Overwrite,
+        },
+        data_storage_version,
+        enable_stable_row_ids: c_opts.enable_stable_row_ids != 0,
+        enable_v2_manifest_paths: c_opts.enable_v2_manifest_paths != 0,
+        skip_auto_cleanup: c_opts.skip_auto_cleanup != 0,
+        ..Default::default()
+    };
+
+    let opts = WriteOptions {
+        lance_write_params: Some(params),
+    };
+
+    let create_builder = *builder_box.inner;
+    let updated_builder = create_builder.write_options(opts);
+
+    let boxed_builder = Box::new(LanceDBCreateTableBuilder {
+        inner: Box::new(updated_builder),
+    });
+
+    Box::into_raw(boxed_builder)
+}
+
+/// Set default values into a LanceDBWriteOptions struct
+///
+/// # Safety
+/// - `write_options` must be a valid pointer to a LanceDBWriteOptions struct
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_write_options_defaults(write_options: *mut LanceDBWriteOptions) {
+    if write_options.is_null() {
+        return;
+    }
+
+    let defaults = WriteParams::default();
+    let opts = &mut *write_options;
+    opts.max_rows_per_file = defaults.max_rows_per_file as u64;
+    opts.max_rows_per_group = defaults.max_rows_per_group as u64;
+    opts.max_bytes_per_file = defaults.max_bytes_per_file as u64;
+    opts.mode = LanceDBWriteMode::Create;
+    opts.data_storage_version = LanceDBDataStorageVersion::None;
+    opts.enable_stable_row_ids = 0;
+    opts.enable_v2_manifest_paths = 0;
+    opts.skip_auto_cleanup = 0;
+}
+
+/// Execute a CreateTableBuilder and return the created table
+///
+/// # Safety
+/// - `builder` must be a valid pointer returned from `lancedb_connection_create_table_builder`
+/// - `builder` will be consumed and must not be used after calling this function
+/// - `table_out` must be a valid pointer to receive the created table
+/// - `error_message` can be NULL to ignore detailed error messages
+///
+/// # Returns
+/// - Error code indicating success or failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_create_table_builder_execute(
+    builder: *mut LanceDBCreateTableBuilder,
+    table_out: *mut *mut LanceDBTable,
+    error_message: *mut *mut c_char,
+) -> LanceDBError {
+    if builder.is_null() {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    }
+
+    let builder_box = Box::from_raw(builder);
+
+    if table_out.is_null() {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    }
+    let create_builder = *builder_box.inner;
+
+    let runtime = get_runtime();
+
+    match runtime.block_on(create_builder.execute()) {
+        Ok(table) => {
+            let boxed_table = Box::new(LanceDBTable { inner: table });
+            *table_out = Box::into_raw(boxed_table);
+            LanceDBError::Success
+        }
+        Err(e) => handle_error(&e, error_message),
+    }
+}
+
+/// Free a CreateTableBuilder
+///
+/// # Safety
+/// - `builder` must be a valid pointer returned from `lancedb_connection_create_table_builder`
+/// - `builder` must not be used after calling this function
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_create_table_builder_free(
+    builder: *mut LanceDBCreateTableBuilder,
+) {
+    if !builder.is_null() {
+        let _ = Box::from_raw(builder);
     }
 }
 

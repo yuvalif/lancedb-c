@@ -539,6 +539,227 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Merge Insert", "[table]") {
   lancedb_table_free(table);
 }
 
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB CreateTableBuilder", "[table]") {
+  SECTION("Create table via builder") {
+    const std::string table_name = "builder_basic_table";
+    constexpr auto row_num = 10;
+
+    auto schema = create_test_schema();
+    auto batch = create_test_record_batch(row_num, 0);
+    auto reader = create_reader_from_batch(batch);
+    REQUIRE(reader != nullptr);
+
+    struct ArrowSchema c_schema;
+    REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    // Create builder
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        db,
+        table_name.c_str(),
+        reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+        reader
+    );
+    REQUIRE(builder != nullptr);
+
+    // Execute builder directly (no write options)
+    LanceDBTable* table = nullptr;
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_create_table_builder_execute(builder, &table, &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(lancedb_table_count_rows(table) == row_num);
+
+    lancedb_table_free(table);
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Create empty table via builder") {
+    const std::string table_name = "builder_empty_table";
+
+    auto schema = create_test_schema();
+
+    struct ArrowSchema c_schema;
+    REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    // Create builder with NULL reader for empty table
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        db,
+        table_name.c_str(),
+        reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+        nullptr
+    );
+    REQUIRE(builder != nullptr);
+
+    LanceDBTable* table = nullptr;
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_create_table_builder_execute(builder, &table, &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(lancedb_table_count_rows(table) == 0);
+
+    lancedb_table_free(table);
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Create table via builder with write options") {
+    const std::string table_name = "builder_write_opts_table";
+    constexpr auto row_num = 10;
+
+    auto schema = create_test_schema();
+    auto batch = create_test_record_batch(row_num, 0);
+    auto reader = create_reader_from_batch(batch);
+    REQUIRE(reader != nullptr);
+
+    struct ArrowSchema c_schema;
+    REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    // Create builder
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        db,
+        table_name.c_str(),
+        reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+        reader
+    );
+    REQUIRE(builder != nullptr);
+
+    // Set write options using defaults, then override
+    LanceDBWriteOptions write_opts;
+    lancedb_write_options_defaults(&write_opts);
+    write_opts.max_rows_per_file = 1024;
+    write_opts.max_rows_per_group = 512;
+
+    builder = lancedb_create_table_builder_write_options(builder, &write_opts);
+    REQUIRE(builder != nullptr);
+
+    // Execute builder
+    LanceDBTable* table = nullptr;
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_create_table_builder_execute(builder, &table, &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(lancedb_table_count_rows(table) == row_num);
+
+    lancedb_table_free(table);
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Builder free without execute") {
+    const std::string table_name = "builder_free_table";
+
+    auto schema = create_test_schema();
+
+    struct ArrowSchema c_schema;
+    REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        db,
+        table_name.c_str(),
+        reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+        nullptr
+    );
+    REQUIRE(builder != nullptr);
+
+    // Free without executing (should not leak)
+    lancedb_create_table_builder_free(builder);
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Builder with null connection should fail") {
+    auto schema = create_test_schema();
+
+    struct ArrowSchema c_schema;
+    REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        nullptr,
+        "test",
+        reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+        nullptr
+    );
+    REQUIRE(builder == nullptr);
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Builder with null connection with reader") {
+    auto batch = create_test_record_batch(5, 0);
+    auto reader = create_reader_from_batch(batch);
+    REQUIRE(reader != nullptr);
+
+    auto schema = create_test_schema();
+    struct ArrowSchema c_schema;
+    REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        nullptr,
+        "test",
+        reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+        reader
+    );
+    REQUIRE(builder == nullptr);
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Builder with null table name") {
+    auto batch = create_test_record_batch(5, 0);
+    auto reader = create_reader_from_batch(batch);
+    REQUIRE(reader != nullptr);
+
+    auto schema = create_test_schema();
+    struct ArrowSchema c_schema;
+    REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        db,
+        nullptr,
+        reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+        reader
+    );
+    REQUIRE(builder == nullptr);
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Builder with null schema") {
+    auto batch = create_test_record_batch(5, 0);
+    auto reader = create_reader_from_batch(batch);
+    REQUIRE(reader != nullptr);
+
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        db,
+        "test",
+        nullptr,
+        reader
+    );
+    REQUIRE(builder == nullptr);
+  }
+}
+
 TEST_CASE_METHOD(LanceDBFixture, "LanceDB Create Reader", "[table]") {
   constexpr auto row_num = 10;
   auto batch = create_test_record_batch(row_num, 0);

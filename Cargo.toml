@@ -19,6 +19,8 @@ crate-type = ["cdylib", "staticlib"]
 tokio = { version = "1.23", features = ["rt-multi-thread"] }
 libc = "0.2"
 lancedb = { version = "0.22.3", features = ["remote"] }
+lance = { version = "0.39", default-features = false }
+lance-file = { version = "0.39", default-features = false }
 arrow = { version = "56.2", optional = false }
 arrow-array = "56.2"
 arrow-data = "56.2"

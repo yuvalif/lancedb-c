@@ -3605,6 +3605,8 @@ dependencies = [
  "arrow-schema",
  "chrono",
  "futures",
+ "lance",
+ "lance-file",
  "lancedb",
  "libc",
  "tokio",

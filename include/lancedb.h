@@ -33,6 +33,11 @@ typedef struct LanceDBTable LanceDBTable;
 typedef struct LanceDBTableNamesBuilder LanceDBTableNamesBuilder;
 
 /**
+ * Opaque handle to a LanceDB CreateTableBuilder
+ */
+typedef struct LanceDBCreateTableBuilder LanceDBCreateTableBuilder;
+
+/**
  * Opaque handle to a LanceDB Query
  */
 typedef struct LanceDBQuery LanceDBQuery;
@@ -211,6 +216,59 @@ typedef struct {
     int when_matched_update_all;     // Update all columns for matched records (1 = true, 0 = false)
     int when_not_matched_insert_all; // Insert all new records (1 = true, 0 = false)
 } LanceDBMergeInsertConfig;
+
+/**
+ * Write mode for table creation/insertion
+ */
+typedef enum {
+    LANCEDB_WRITE_MODE_CREATE = 0,    // Create a new dataset (expect it does not exist)
+    LANCEDB_WRITE_MODE_APPEND = 1,    // Append to an existing dataset
+    LANCEDB_WRITE_MODE_OVERWRITE = 2  // Overwrite as a new version, or create if not exists
+} LanceDBWriteMode;
+
+/**
+ * Data storage version (Lance file format version)
+ */
+typedef enum {
+    LANCEDB_DATA_STORAGE_VERSION_NONE = 0,    // Use default (latest stable)
+    LANCEDB_DATA_STORAGE_VERSION_LEGACY = 1,  // The legacy (0.1) format
+    LANCEDB_DATA_STORAGE_VERSION_V2_0 = 2,
+    LANCEDB_DATA_STORAGE_VERSION_STABLE = 3,  // The latest stable release (default for new datasets)
+    LANCEDB_DATA_STORAGE_VERSION_V2_1 = 4,
+    LANCEDB_DATA_STORAGE_VERSION_NEXT = 5,    // The latest unstable release
+    LANCEDB_DATA_STORAGE_VERSION_V2_2 = 6
+} LanceDBDataStorageVersion;
+
+/**
+ * Write options configuration for table creation
+ *
+ * Controls how data is written when creating a table.
+ * See: https://docs.rs/lance/latest/lance/dataset/write/struct.WriteParams.html
+ *
+ * Note: the following WriteParams fields cannot be represented in C and are not included:
+ * store_params, progress, commit_handler, session, auto_cleanup,
+ * transaction_properties, initial_bases, target_bases, target_base_names_or_paths
+ */
+typedef struct {
+    unsigned long long max_rows_per_file;           // Max records per file (default: 1024 * 1024)
+    unsigned long long max_rows_per_group;          // Max rows per row group (default: 1024)
+    unsigned long long max_bytes_per_file;          // Max file size in bytes, soft limit (default: 90 * 1024 * 1024 * 1024)
+    LanceDBWriteMode mode;                          // Write mode (default: LANCEDB_WRITE_MODE_CREATE)
+    LanceDBDataStorageVersion data_storage_version; // Data file format version (default: LANCEDB_DATA_STORAGE_VERSION_NONE)
+    int enable_stable_row_ids;                      // Use stable row IDs, experimental (1 = true, 0 = false, default: false)
+    int enable_v2_manifest_paths;                   // Use v2 manifest paths (1 = true, 0 = false, default: false)
+    int skip_auto_cleanup;                          // Skip auto cleanup during commits (1 = true, 0 = false, default: false)
+} LanceDBWriteOptions;
+
+/**
+ * Set default values into a LanceDBWriteOptions struct
+ *
+ * @param write_options - pointer to LanceDBWriteOptions to initialize
+ *
+ * This is a convenience function that populates all fields with the
+ * lance default values. Callers can then override specific fields as needed.
+ */
+void lancedb_write_options_defaults(LanceDBWriteOptions* write_options);
 
 /**
  * Create a ConnectBuilder for the given URI
@@ -557,6 +615,70 @@ LanceDBError lancedb_table_create(
     LanceDBTable** table_out,
     char** error_message
 );
+
+/**
+ * Create a CreateTableBuilder for the given connection, table name, schema, and data
+ *
+ * @param connection - pointer to LanceDBConnection
+ * @param table_name - null-terminated C string containing the table name
+ * @param schema_ptr - pointer to Arrow C ABI schema
+ * @param reader - pointer to LanceDBRecordBatchReader or NULL for empty table
+ * @return Non-null pointer to LanceDBCreateTableBuilder on success, NULL on failure
+ *
+ * The reader is consumed by this function (when not NULL) and must not be used after calling.
+ * Use lancedb_create_table_builder_write_options() to configure write options,
+ * then lancedb_create_table_builder_execute() to create the table.
+ * The returned pointer must be freed with lancedb_create_table_builder_free()
+ * if not consumed by lancedb_create_table_builder_execute().
+ */
+LanceDBCreateTableBuilder* lancedb_connection_create_table_builder(
+    const LanceDBConnection* connection,
+    const char* table_name,
+    const FFI_ArrowSchema* schema_ptr,
+    LanceDBRecordBatchReader* reader
+);
+
+/**
+ * Set write options on a CreateTableBuilder
+ *
+ * @param builder - pointer to LanceDBCreateTableBuilder
+ * @param write_options - pointer to LanceDBWriteOptions configuration
+ * @return A new pointer to LanceDBCreateTableBuilder on success, NULL on failure
+ *
+ * The builder is consumed by this function and must not be used after calling.
+ */
+LanceDBCreateTableBuilder* lancedb_create_table_builder_write_options(
+    LanceDBCreateTableBuilder* builder,
+    const LanceDBWriteOptions* write_options
+);
+
+/**
+ * Execute a CreateTableBuilder and return the created table
+ *
+ * @param builder - pointer to LanceDBCreateTableBuilder
+ * @param table_out - pointer to receive the created table
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Error code indicating success or failure
+ *
+ * The builder is consumed by this function and must not be used after calling.
+ * The caller is responsible for freeing the returned table with lancedb_table_free().
+ * If error_message is provided and an error occurs, the caller must free
+ * the error message with lancedb_free_string().
+ */
+LanceDBError lancedb_create_table_builder_execute(
+    LanceDBCreateTableBuilder* builder,
+    LanceDBTable** table_out,
+    char** error_message
+);
+
+/**
+ * Free a CreateTableBuilder
+ *
+ * @param builder - pointer to LanceDBCreateTableBuilder
+ *
+ * After calling this function, the builder pointer must not be used.
+ */
+void lancedb_create_table_builder_free(LanceDBCreateTableBuilder* builder);
 
 /**
  * Get table schema as Arrow C ABI
