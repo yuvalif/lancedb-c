@@ -101,11 +101,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Add", "[table]") {
     char* error_message = nullptr;
     LanceDBError result = lancedb_table_add(table, reader, &error_message);
 
-    if (error_message) {
-      INFO("Error message: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Verify row count
     REQUIRE(lancedb_table_count_rows(table) == row_num);
@@ -129,10 +126,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Add", "[table]") {
     char* error_message = nullptr;
     LanceDBError result = lancedb_table_add(table, reader1, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(lancedb_table_count_rows(table) == row_num1);
 
     // Version should increment to 2
@@ -147,10 +142,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Add", "[table]") {
 
     result = lancedb_table_add(table, reader2, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(lancedb_table_count_rows(table) == row_num1+row_num2);
 
     // Version should increment to 3
@@ -168,10 +161,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Add", "[table]") {
     char* error_message = nullptr;
     LanceDBError result = lancedb_table_add(table, reader1, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(lancedb_table_count_rows(table) == row_num);
 
     // Add data with overlapping keys (5-14)
@@ -184,10 +175,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Add", "[table]") {
 
     result = lancedb_table_add(table, reader2, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // table_add adds all rows
     // So we should have 10 (original) + 10 (new batch) = 20 rows
@@ -249,10 +238,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Merge Insert", "[table]") {
   char* error_message = nullptr;
   LanceDBError result = lancedb_table_add(table, initial_reader, &error_message);
 
-  if (error_message) {
-    lancedb_free_string(error_message);
-  }
   REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
   REQUIRE(lancedb_table_count_rows(table) == row_num);
 
   // Initial version after add should be 2 (1 for empty table creation, 2 after add)
@@ -305,11 +292,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Merge Insert", "[table]") {
     LanceDBError result = lancedb_table_merge_insert(
         table, merge_reader, on_columns, 1, &config, &error_message);
 
-    if (error_message) {
-      INFO("Error message: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Should have 10 (original) - 5 (overlapping) + 10 (total in merge) = 15 rows
     REQUIRE(lancedb_table_count_rows(table) == 15);
@@ -354,10 +338,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Merge Insert", "[table]") {
     LanceDBError result = lancedb_table_merge_insert(
         table, merge_reader, on_columns, 1, &config, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Should still have 10 rows (only updates, no inserts)
     REQUIRE(lancedb_table_count_rows(table) == 10);
@@ -402,10 +384,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Merge Insert", "[table]") {
     LanceDBError result = lancedb_table_merge_insert(
         table, merge_reader, on_columns, 1, &config, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Should have 10 + 5 = 15 rows (only inserts, no updates)
     REQUIRE(lancedb_table_count_rows(table) == 15);
@@ -426,10 +406,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Merge Insert", "[table]") {
     LanceDBError result = lancedb_table_merge_insert(
         table, merge_reader, on_columns, 1, nullptr, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Default behavior should handle the merge
     REQUIRE(lancedb_table_count_rows(table) >= 10);
@@ -479,10 +457,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Merge Insert", "[table]") {
     LanceDBError result = lancedb_table_merge_insert(
         table, merge_reader, on_columns, 1, &config, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Row count should remain 10 (no new rows)
     REQUIRE(lancedb_table_count_rows(table) == 10);

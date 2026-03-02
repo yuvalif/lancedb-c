@@ -315,6 +315,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Names Builder", "[connection]") 
     char* error_message = nullptr;
     auto result = lancedb_connection_table_names(db, &all_names, &all_count, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(all_count == num_tables);
 
     std::set<std::string> all_tables_via_pagination;

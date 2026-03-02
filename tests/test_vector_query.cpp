@@ -49,11 +49,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - nearest_to without inde
         &count,
         &error_message);
 
-    if (error_message) {
-      INFO("Error: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(result_arrays != nullptr);
     REQUIRE(result_schema != nullptr);
     REQUIRE(count > 0);
@@ -92,13 +89,9 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - nearest_to without inde
         &count,
         &error_message);
 
-    if (error_message) {
-      INFO("Error: " << error_message);
-      lancedb_free_string(error_message);
-    }
-
     // Should succeed because the API finds the "data" vector column
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(result_arrays != nullptr);
     REQUIRE(result_schema != nullptr);
     REQUIRE(count > 0);
@@ -148,30 +141,21 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - paged query with limit 
       // Set limit
       char* error_message = nullptr;
       LanceDBError result = lancedb_vector_query_limit(query, limit, &error_message);
-      if (error_message) {
-        INFO("Error setting limit: " << error_message);
-        lancedb_free_string(error_message);
-      }
       REQUIRE(result == LANCEDB_SUCCESS);
+      REQUIRE(error_message == nullptr);
 
       // Set offset
       error_message = nullptr;
       result = lancedb_vector_query_offset(query, offset, &error_message);
-      if (error_message) {
-        INFO("Error setting offset: " << error_message);
-        lancedb_free_string(error_message);
-      }
       REQUIRE(result == LANCEDB_SUCCESS);
+      REQUIRE(error_message == nullptr);
 
       // Select "key" and "data" columns
       const char* columns[] = {"key", "data"};
       error_message = nullptr;
       result = lancedb_vector_query_select(query, columns, 2, &error_message);
-      if (error_message) {
-        INFO("Error setting select: " << error_message);
-        lancedb_free_string(error_message);
-      }
       REQUIRE(result == LANCEDB_SUCCESS);
+      REQUIRE(error_message == nullptr);
 
       // Execute query (consumes the query object)
       LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
@@ -185,11 +169,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - paged query with limit 
       result = lancedb_query_result_to_arrow(
           query_result, &result_arrays, &result_schema, &count, &error_message);
 
-      if (error_message) {
-        INFO("Error converting to Arrow: " << error_message);
-        lancedb_free_string(error_message);
-      }
       REQUIRE(result == LANCEDB_SUCCESS);
+      REQUIRE(error_message == nullptr);
       REQUIRE(count > 0);
       REQUIRE(result_arrays != nullptr);
       REQUIRE(result_schema != nullptr);
@@ -247,11 +228,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - nearest_to with IVF_FLA
   LanceDBError result = lancedb_table_create_vector_index(
       table, vector_columns, 1, LANCEDB_INDEX_IVF_FLAT, &config, &error_message);
 
-  if (error_message) {
-    INFO("Error creating index: " << error_message);
-    lancedb_free_string(error_message);
-  }
   REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
 
   SECTION("Query with vector index") {
     // Create random query vector
@@ -274,11 +252,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - nearest_to with IVF_FLA
         &count,
         &error_message);
 
-    if (error_message) {
-      INFO("Error: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(result_arrays != nullptr);
     REQUIRE(result_schema != nullptr);
     REQUIRE(count > 0);
@@ -317,11 +292,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - nearest_to with IVF_FLA
         &count,
         &error_message);
 
-    if (error_message) {
-      INFO("Error: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(result_arrays != nullptr);
     REQUIRE(result_schema != nullptr);
     REQUIRE(count > 0);
@@ -365,11 +337,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - configuration parameter
   LanceDBError result = lancedb_table_create_vector_index(
       table, vector_columns, 1, LANCEDB_INDEX_IVF_FLAT, &config, &error_message);
 
-  if (error_message) {
-    INFO("Error creating index: " << error_message);
-    lancedb_free_string(error_message);
-  }
   REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
 
   SECTION("Test distance_type parameter with L2 distance") {
     std::vector<float> query_vector = generate_random_query_vector(TEST_SCHEMA_DIMENSIONS);
@@ -384,16 +353,14 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - configuration parameter
     // Set L2 distance type
     error_message = nullptr;
     result = lancedb_vector_query_distance_type(query, LANCEDB_DISTANCE_L2, &error_message);
-    if (error_message) {
-      INFO("Error setting distance type: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Set limit
     error_message = nullptr;
     result = lancedb_vector_query_limit(query, 5, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
@@ -408,6 +375,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - configuration parameter
         query_result, &result_arrays, &result_schema, &count, &error_message);
 
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count > 0);
     REQUIRE(result_arrays != nullptr);
 
@@ -436,16 +404,14 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - configuration parameter
     // Set Cosine distance type
     error_message = nullptr;
     result = lancedb_vector_query_distance_type(query, LANCEDB_DISTANCE_COSINE, &error_message);
-    if (error_message) {
-      INFO("Error setting distance type: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Set limit
     error_message = nullptr;
     result = lancedb_vector_query_limit(query, 5, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
@@ -460,6 +426,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - configuration parameter
         query_result, &result_arrays, &result_schema, &count, &error_message);
 
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count > 0);
 
     // Count total rows
@@ -487,16 +454,14 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - configuration parameter
     // Set nprobes to 2 (we have 4 partitions in the index)
     error_message = nullptr;
     result = lancedb_vector_query_nprobes(query, 2, &error_message);
-    if (error_message) {
-      INFO("Error setting nprobes: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Set limit
     error_message = nullptr;
     result = lancedb_vector_query_limit(query, 10, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
@@ -511,6 +476,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - configuration parameter
         query_result, &result_arrays, &result_schema, &count, &error_message);
 
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count > 0);
 
     // Count total rows
@@ -538,16 +504,14 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - configuration parameter
     // Set refine_factor to 10 (will fetch 10x more results and refine)
     error_message = nullptr;
     result = lancedb_vector_query_refine_factor(query, 10, &error_message);
-    if (error_message) {
-      INFO("Error setting refine_factor: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Set limit
     error_message = nullptr;
     result = lancedb_vector_query_limit(query, 5, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
@@ -562,6 +526,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - configuration parameter
         query_result, &result_arrays, &result_schema, &count, &error_message);
 
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count > 0);
 
     // Count total rows
@@ -590,21 +555,25 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - configuration parameter
     error_message = nullptr;
     result = lancedb_vector_query_nprobes(query, 3, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Set refine_factor
     error_message = nullptr;
     result = lancedb_vector_query_refine_factor(query, 5, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Set distance type
     error_message = nullptr;
     result = lancedb_vector_query_distance_type(query, LANCEDB_DISTANCE_L2, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Set limit
     error_message = nullptr;
     result = lancedb_vector_query_limit(query, 8, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
@@ -619,6 +588,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - configuration parameter
         query_result, &result_arrays, &result_schema, &count, &error_message);
 
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count > 0);
 
     // Count total rows
@@ -660,11 +630,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - HNSW parameters", "[vec
   LanceDBError result = lancedb_table_create_vector_index(
       table, vector_columns, 1, LANCEDB_INDEX_IVF_HNSW_SQ, &config, &error_message);
 
-  if (error_message) {
-    INFO("Error creating HNSW index: " << error_message);
-    lancedb_free_string(error_message);
-  }
   REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
 
   SECTION("Test ef parameter with HNSW index") {
     std::vector<float> query_vector = generate_random_query_vector(TEST_SCHEMA_DIMENSIONS);
@@ -679,16 +646,14 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - HNSW parameters", "[vec
     // Set ef parameter (exploration factor for HNSW)
     error_message = nullptr;
     result = lancedb_vector_query_ef(query, 100, &error_message);
-    if (error_message) {
-      INFO("Error setting ef: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Set limit
     error_message = nullptr;
     result = lancedb_vector_query_limit(query, 10, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
@@ -703,6 +668,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - HNSW parameters", "[vec
         query_result, &result_arrays, &result_schema, &count, &error_message);
 
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count > 0);
 
     // Count total rows
@@ -731,16 +697,19 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - HNSW parameters", "[vec
     error_message = nullptr;
     result = lancedb_vector_query_ef(query, 50, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Set nprobes (IVF_HNSW_SQ has IVF component too)
     error_message = nullptr;
     result = lancedb_vector_query_nprobes(query, 2, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Set limit
     error_message = nullptr;
     result = lancedb_vector_query_limit(query, 5, &error_message);
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
@@ -755,6 +724,7 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - HNSW parameters", "[vec
         query_result, &result_arrays, &result_schema, &count, &error_message);
 
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count > 0);
 
     // Count total rows
