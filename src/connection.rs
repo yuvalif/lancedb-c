@@ -17,7 +17,10 @@ use lancedb::connection::{
 use lancedb::database::{CreateNamespaceRequest, DropNamespaceRequest, ListNamespacesRequest};
 use lancedb::Table;
 
+use std::time::Duration;
+
 use lance::dataset::{WriteMode, WriteParams};
+use lance::io::ObjectStoreParams;
 use lance_file::version::LanceFileVersion;
 use lancedb::table::WriteOptions;
 
@@ -25,7 +28,8 @@ use crate::error::{
     handle_error, set_invalid_argument_message, set_unknown_error_message, LanceDBError,
 };
 use crate::types::{
-    LanceDBDataStorageVersion, LanceDBRecordBatchReader, LanceDBWriteMode, LanceDBWriteOptions,
+    CWrappingObjectStore, LanceDBDataStorageVersion, LanceDBObjectStoreParams,
+    LanceDBRecordBatchReader, LanceDBWriteMode, LanceDBWriteOptions,
 };
 
 /// Opaque handle to a ConnectBuilder
@@ -381,6 +385,25 @@ pub unsafe extern "C" fn lancedb_create_table_builder_write_options(
         LanceDBDataStorageVersion::V2_2 => Some(LanceFileVersion::V2_2),
     };
 
+    // Build store_params if provided
+    let store_params = if !c_opts.store_params.is_null() {
+        let sp = &*c_opts.store_params;
+        let mut osp = ObjectStoreParams {
+            s3_credentials_refresh_offset: Duration::from_secs(
+                sp.s3_credentials_refresh_offset_secs,
+            ),
+            use_constant_size_upload_parts: sp.use_constant_size_upload_parts != 0,
+            ..Default::default()
+        };
+        if let Some(wrap_fn) = sp.wrap_fn {
+            let wrapper = CWrappingObjectStore::new(wrap_fn, sp.wrap_user_data, sp.free_user_data);
+            osp.object_store_wrapper = Some(Arc::new(wrapper));
+        }
+        Some(osp)
+    } else {
+        None
+    };
+
     let params = WriteParams {
         max_rows_per_file: c_opts.max_rows_per_file as usize,
         max_rows_per_group: c_opts.max_rows_per_group as usize,
@@ -394,6 +417,7 @@ pub unsafe extern "C" fn lancedb_create_table_builder_write_options(
         enable_stable_row_ids: c_opts.enable_stable_row_ids != 0,
         enable_v2_manifest_paths: c_opts.enable_v2_manifest_paths != 0,
         skip_auto_cleanup: c_opts.skip_auto_cleanup != 0,
+        store_params,
         ..Default::default()
     };
 
@@ -431,6 +455,27 @@ pub unsafe extern "C" fn lancedb_write_options_defaults(write_options: *mut Lanc
     opts.enable_stable_row_ids = 0;
     opts.enable_v2_manifest_paths = 0;
     opts.skip_auto_cleanup = 0;
+    opts.store_params = std::ptr::null();
+}
+
+/// Set default values into a LanceDBObjectStoreParams struct
+///
+/// # Safety
+/// - `params` must be a valid pointer to a LanceDBObjectStoreParams struct
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_object_store_params_defaults(
+    params: *mut LanceDBObjectStoreParams,
+) {
+    if params.is_null() {
+        return;
+    }
+
+    let p = &mut *params;
+    p.s3_credentials_refresh_offset_secs = 60;
+    p.use_constant_size_upload_parts = 0;
+    p.wrap_fn = None;
+    p.wrap_user_data = std::ptr::null_mut();
+    p.free_user_data = None;
 }
 
 /// Execute a CreateTableBuilder and return the created table

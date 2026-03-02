@@ -58,6 +58,11 @@ typedef struct LanceDBQueryResult LanceDBQueryResult;
 typedef struct LanceDBRecordBatchReader LanceDBRecordBatchReader;
 
 /**
+ * Opaque handle to a wrapped ObjectStore (used in wrap callbacks)
+ */
+typedef struct LanceDBObjectStore LanceDBObjectStore;
+
+/**
  * Arrow C ABI Schema structure (opaque)
  */
 typedef struct FFI_ArrowSchema FFI_ArrowSchema;
@@ -240,13 +245,46 @@ typedef enum {
 } LanceDBDataStorageVersion;
 
 /**
+ * Callback type for wrapping an object store with additional functionality.
+ *
+ * Called with the original object store handle (valid only during the callback),
+ * key/value storage options arrays, their count, and user_data.
+ * Return a new LanceDBObjectStore* to wrap, or NULL to use the original unchanged.
+ *
+ * The returned handle, if non-NULL, transfers ownership to the caller.
+ */
+typedef LanceDBObjectStore* (*LanceDBWrapObjectStoreFn)(
+    const LanceDBObjectStore* original,
+    const char* const* keys, const char* const* values, size_t count,
+    void* user_data);
+
+/**
+ * Callback type for freeing user data associated with a wrap callback.
+ */
+typedef void (*LanceDBFreeUserDataFn)(void* user_data);
+
+/**
+ * Object store parameters for table creation
+ *
+ * Controls object store behavior. Use lancedb_object_store_params_defaults()
+ * to initialize with defaults, then override specific fields as needed.
+ */
+typedef struct {
+    unsigned long long s3_credentials_refresh_offset_secs; // Duration in seconds (default: 60)
+    int use_constant_size_upload_parts;                    // 1=true, 0=false (default: 0)
+    LanceDBWrapObjectStoreFn wrap_fn;                      // Object store wrapper callback (NULL = no wrapper)
+    void* wrap_user_data;                                  // User data passed to wrap_fn
+    LanceDBFreeUserDataFn free_user_data;                  // Callback to free wrap_user_data (NULL = no-op)
+} LanceDBObjectStoreParams;
+
+/**
  * Write options configuration for table creation
  *
  * Controls how data is written when creating a table.
  * See: https://docs.rs/lance/latest/lance/dataset/write/struct.WriteParams.html
  *
  * Note: the following WriteParams fields cannot be represented in C and are not included:
- * store_params, progress, commit_handler, session, auto_cleanup,
+ * progress, commit_handler, session, auto_cleanup,
  * transaction_properties, initial_bases, target_bases, target_base_names_or_paths
  */
 typedef struct {
@@ -258,6 +296,7 @@ typedef struct {
     int enable_stable_row_ids;                      // Use stable row IDs, experimental (1 = true, 0 = false, default: false)
     int enable_v2_manifest_paths;                   // Use v2 manifest paths (1 = true, 0 = false, default: false)
     int skip_auto_cleanup;                          // Skip auto cleanup during commits (1 = true, 0 = false, default: false)
+    const LanceDBObjectStoreParams* store_params;   // Object store params (NULL = defaults)
 } LanceDBWriteOptions;
 
 /**
@@ -269,6 +308,16 @@ typedef struct {
  * lance default values. Callers can then override specific fields as needed.
  */
 void lancedb_write_options_defaults(LanceDBWriteOptions* write_options);
+
+/**
+ * Set default values into a LanceDBObjectStoreParams struct
+ *
+ * @param params - pointer to LanceDBObjectStoreParams to initialize
+ *
+ * This is a convenience function that populates all fields with the
+ * default values. Callers can then override specific fields as needed.
+ */
+void lancedb_object_store_params_defaults(LanceDBObjectStoreParams* params);
 
 /**
  * Create a ConnectBuilder for the given URI

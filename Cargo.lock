@@ -3609,6 +3609,7 @@ dependencies = [
  "lance-file",
  "lancedb",
  "libc",
+ "object_store",
  "tokio",
 ]
 

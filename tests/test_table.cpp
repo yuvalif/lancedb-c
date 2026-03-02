@@ -760,6 +760,224 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB CreateTableBuilder", "[table]") {
   }
 }
 
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB ObjectStoreParams", "[table]") {
+  SECTION("Defaults are correct") {
+    LanceDBObjectStoreParams params;
+    lancedb_object_store_params_defaults(&params);
+
+    REQUIRE(params.s3_credentials_refresh_offset_secs == 60);
+    REQUIRE(params.use_constant_size_upload_parts == 0);
+    REQUIRE(params.wrap_fn == nullptr);
+    REQUIRE(params.wrap_user_data == nullptr);
+    REQUIRE(params.free_user_data == nullptr);
+  }
+
+  SECTION("Create table with custom store_params") {
+    const std::string table_name = "store_params_custom_table";
+    constexpr auto row_num = 5;
+
+    auto schema = create_test_schema();
+    auto batch = create_test_record_batch(row_num, 0);
+    auto reader = create_reader_from_batch(batch);
+    REQUIRE(reader != nullptr);
+
+    struct ArrowSchema c_schema;
+    REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        db, table_name.c_str(),
+        reinterpret_cast<FFI_ArrowSchema*>(&c_schema), reader);
+    REQUIRE(builder != nullptr);
+
+    LanceDBWriteOptions write_opts;
+    lancedb_write_options_defaults(&write_opts);
+
+    LanceDBObjectStoreParams store_params;
+    lancedb_object_store_params_defaults(&store_params);
+    store_params.s3_credentials_refresh_offset_secs = 120;
+    store_params.use_constant_size_upload_parts = 1;
+    write_opts.store_params = &store_params;
+
+    builder = lancedb_create_table_builder_write_options(builder, &write_opts);
+    REQUIRE(builder != nullptr);
+
+    LanceDBTable* table = nullptr;
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_create_table_builder_execute(builder, &table, &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(lancedb_table_count_rows(table) == row_num);
+
+    lancedb_table_free(table);
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Create table with NULL store_params uses defaults") {
+    const std::string table_name = "store_params_null_table";
+    constexpr auto row_num = 5;
+
+    auto schema = create_test_schema();
+    auto batch = create_test_record_batch(row_num, 0);
+    auto reader = create_reader_from_batch(batch);
+    REQUIRE(reader != nullptr);
+
+    struct ArrowSchema c_schema;
+    REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        db, table_name.c_str(),
+        reinterpret_cast<FFI_ArrowSchema*>(&c_schema), reader);
+    REQUIRE(builder != nullptr);
+
+    LanceDBWriteOptions write_opts;
+    lancedb_write_options_defaults(&write_opts);
+    // store_params defaults to NULL via lancedb_write_options_defaults
+
+    builder = lancedb_create_table_builder_write_options(builder, &write_opts);
+    REQUIRE(builder != nullptr);
+
+    LanceDBTable* table = nullptr;
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_create_table_builder_execute(builder, &table, &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(lancedb_table_count_rows(table) == row_num);
+
+    lancedb_table_free(table);
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("Pass-through wrap callback returns NULL") {
+    const std::string table_name = "store_params_wrap_passthrough";
+    constexpr auto row_num = 5;
+
+    auto schema = create_test_schema();
+    auto batch = create_test_record_batch(row_num, 0);
+    auto reader = create_reader_from_batch(batch);
+    REQUIRE(reader != nullptr);
+
+    struct ArrowSchema c_schema;
+    REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        db, table_name.c_str(),
+        reinterpret_cast<FFI_ArrowSchema*>(&c_schema), reader);
+    REQUIRE(builder != nullptr);
+
+    LanceDBWriteOptions write_opts;
+    lancedb_write_options_defaults(&write_opts);
+
+    LanceDBObjectStoreParams store_params;
+    lancedb_object_store_params_defaults(&store_params);
+    // Pass-through: callback returns NULL to use original
+    store_params.wrap_fn = [](const LanceDBObjectStore* /*original*/,
+                              const char* const* /*keys*/,
+                              const char* const* /*values*/,
+                              size_t /*count*/,
+                              void* /*user_data*/) -> LanceDBObjectStore* {
+      return nullptr;
+    };
+    write_opts.store_params = &store_params;
+
+    builder = lancedb_create_table_builder_write_options(builder, &write_opts);
+    REQUIRE(builder != nullptr);
+
+    LanceDBTable* table = nullptr;
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_create_table_builder_execute(builder, &table, &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(lancedb_table_count_rows(table) == row_num);
+
+    lancedb_table_free(table);
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+
+  SECTION("free_user_data callback is invoked when connection is freed") {
+    // Create a separate connection so we can free it within this test
+    LanceDBConnectBuilder* conn_builder = lancedb_connect(uri.c_str());
+    REQUIRE(conn_builder != nullptr);
+    LanceDBConnection* conn = lancedb_connect_builder_execute(conn_builder);
+    REQUIRE(conn != nullptr);
+
+    const std::string table_name = "store_params_free_userdata";
+    constexpr auto row_num = 5;
+
+    auto schema = create_test_schema();
+    auto batch = create_test_record_batch(row_num, 0);
+    auto reader = create_reader_from_batch(batch);
+    REQUIRE(reader != nullptr);
+
+    struct ArrowSchema c_schema;
+    REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    LanceDBCreateTableBuilder* builder = lancedb_connection_create_table_builder(
+        conn, table_name.c_str(),
+        reinterpret_cast<FFI_ArrowSchema*>(&c_schema), reader);
+    REQUIRE(builder != nullptr);
+
+    LanceDBWriteOptions write_opts;
+    lancedb_write_options_defaults(&write_opts);
+
+    // Allocate a flag to track whether free_user_data was called
+    bool* freed = new bool(false);
+
+    LanceDBObjectStoreParams store_params;
+    lancedb_object_store_params_defaults(&store_params);
+    store_params.wrap_fn = [](const LanceDBObjectStore* /*original*/,
+                              const char* const* /*keys*/,
+                              const char* const* /*values*/,
+                              size_t /*count*/,
+                              void* /*user_data*/) -> LanceDBObjectStore* {
+      return nullptr;
+    };
+    store_params.wrap_user_data = freed;
+    store_params.free_user_data = [](void* user_data) {
+      bool* flag = static_cast<bool*>(user_data);
+      *flag = true;
+    };
+    write_opts.store_params = &store_params;
+
+    builder = lancedb_create_table_builder_write_options(builder, &write_opts);
+    REQUIRE(builder != nullptr);
+
+    LanceDBTable* table = nullptr;
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_create_table_builder_execute(builder, &table, &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(table != nullptr);
+
+    lancedb_table_free(table);
+    // Free the connection to release all internal references to the object store wrapper
+    lancedb_connection_free(conn);
+
+    REQUIRE(*freed == true);
+
+    delete freed;
+
+    if (c_schema.release) {
+      c_schema.release(&c_schema);
+    }
+  }
+}
+
 TEST_CASE_METHOD(LanceDBFixture, "LanceDB Create Reader", "[table]") {
   constexpr auto row_num = 10;
   auto batch = create_test_record_batch(row_num, 0);

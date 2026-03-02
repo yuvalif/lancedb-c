@@ -25,5 +25,6 @@ arrow = { version = "56.2", optional = false }
 arrow-array = "56.2"
 arrow-data = "56.2"
 arrow-schema = "56.2"
+object_store = "0.12"
 futures = "0"
 chrono = "0"
