@@ -24,21 +24,16 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Scalar Index", "[index]") {
     LanceDBError result = lancedb_table_create_scalar_index(
         table, columns, 1, LANCEDB_INDEX_BTREE, &config, &error_message);
 
-    if (error_message) {
-      INFO("Error message: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // List indices (should have one index)
     char** indices = nullptr;
     size_t count = 0;
     result = lancedb_table_list_indices(table, &indices, &count, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count == 1);
     REQUIRE(indices != nullptr);
 
@@ -56,10 +51,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Scalar Index", "[index]") {
 
     result = lancedb_table_add(table, reader, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Verify total row count
     REQUIRE(lancedb_table_count_rows(table) == 150);
@@ -84,21 +77,16 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Scalar Index", "[index]") {
     LanceDBError result = lancedb_table_create_scalar_index(
         table, columns, 1, LANCEDB_INDEX_BTREE, &config, &error_message);
 
-    if (error_message) {
-      INFO("Error message: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // List indices (should have one index)
     char** indices = nullptr;
     size_t count = 0;
     result = lancedb_table_list_indices(table, &indices, &count, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count == 1);
     REQUIRE(indices != nullptr);
 
@@ -116,10 +104,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Scalar Index", "[index]") {
 
     result = lancedb_table_add(table, reader, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Verify row count
     REQUIRE(lancedb_table_count_rows(table) == 100);
@@ -143,30 +129,24 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Scalar Index", "[index]") {
     LanceDBError result = lancedb_table_create_scalar_index(
         table, columns, 1, LANCEDB_INDEX_BTREE, &config, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Replace the index
     config.replace = 1;
     result = lancedb_table_create_scalar_index(
         table, columns, 1, LANCEDB_INDEX_BTREE, &config, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // List indices (should still have one index after replacement)
     char** indices = nullptr;
     size_t count = 0;
     result = lancedb_table_list_indices(table, &indices, &count, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count == 1);
     REQUIRE(indices != nullptr);
 
@@ -195,11 +175,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Scalar Index List and Drop", "[index]"
     char* error_message = nullptr;
     LanceDBError result = lancedb_table_list_indices(table, &indices, &count, &error_message);
 
-    if (error_message) {
-      INFO("Error message: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count == 0);
     REQUIRE(indices == nullptr);
 
@@ -222,20 +199,16 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Scalar Index List and Drop", "[index]"
     LanceDBError result = lancedb_table_create_scalar_index(
         table, columns, 1, LANCEDB_INDEX_BTREE, &config, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // List indices to get the index name
     char** indices = nullptr;
     size_t count = 0;
     result = lancedb_table_list_indices(table, &indices, &count, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count == 1);
     REQUIRE(indices != nullptr);
 
@@ -249,21 +222,16 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Scalar Index List and Drop", "[index]"
     // Drop the index
     result = lancedb_table_drop_index(table, index_name.c_str(), &error_message);
 
-    if (error_message) {
-      INFO("Error message: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // List indices again (should be empty)
     indices = nullptr;
     count = 0;
     result = lancedb_table_list_indices(table, &indices, &count, &error_message);
 
-    if (error_message) {
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count == 0);
 
     lancedb_table_free(table);

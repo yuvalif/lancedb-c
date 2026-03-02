@@ -14,11 +14,8 @@ void verify_query_result(LanceDBQueryResult* query_result, size_t expected_rows)
   const auto result = lancedb_query_result_to_arrow(
       query_result, &result_arrays, &result_schema, &count, &error_message);
 
-  if (error_message) {
-    INFO("Error converting to Arrow: " << error_message);
-    lancedb_free_string(error_message);
-  }
   REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
   REQUIRE(count > 0);
   REQUIRE(result_arrays != nullptr);
   REQUIRE(result_schema != nullptr);
@@ -50,11 +47,8 @@ void create_key_index(LanceDBTable* table) {
   LanceDBError result = lancedb_table_create_scalar_index(
       table, index_columns, 1, LANCEDB_INDEX_BTREE, &config, &error_message);
 
-  if (error_message) {
-    INFO("Error creating index: " << error_message);
-    lancedb_free_string(error_message);
-  }
   REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
 }
 
 TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - all entries", "[query]") {
@@ -75,11 +69,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - all entries", "[query]") {
     const char* columns[] = {"key", "data"};
     char* error_message = nullptr;
     LanceDBError result = lancedb_query_select(query, columns, 2, &error_message);
-    if (error_message) {
-      INFO("Error setting select: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_query_execute(query);
@@ -101,30 +92,21 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - all entries", "[query]") {
       // Set limit
       char* error_message = nullptr;
       LanceDBError result = lancedb_query_limit(query, limit, &error_message);
-      if (error_message) {
-        INFO("Error setting limit: " << error_message);
-        lancedb_free_string(error_message);
-      }
       REQUIRE(result == LANCEDB_SUCCESS);
+      REQUIRE(error_message == nullptr);
 
       // Set offset
       error_message = nullptr;
       result = lancedb_query_offset(query, offset, &error_message);
-      if (error_message) {
-        INFO("Error setting offset: " << error_message);
-        lancedb_free_string(error_message);
-      }
       REQUIRE(result == LANCEDB_SUCCESS);
+      REQUIRE(error_message == nullptr);
 
       // Select "key" and "data" columns
       const char* columns[] = {"key", "data"};
       error_message = nullptr;
       result = lancedb_query_select(query, columns, 2, &error_message);
-      if (error_message) {
-        INFO("Error setting select: " << error_message);
-        lancedb_free_string(error_message);
-      }
       REQUIRE(result == LANCEDB_SUCCESS);
+      REQUIRE(error_message == nullptr);
 
       // Execute query (consumes the query object)
       LanceDBQueryResult* query_result = lancedb_query_execute(query);
@@ -159,20 +141,14 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Where Filter", "[query]") {
     const char* columns[] = {"key", "data"};
     char* error_message = nullptr;
     LanceDBError result = lancedb_query_select(query, columns, 2, &error_message);
-    if (error_message) {
-      INFO("Error setting select: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Filter by key = 42 select
     error_message = nullptr;
     result = lancedb_query_where_filter(query, "key = \"key_42\"", &error_message);
-    if (error_message) {
-      INFO("Error setting where filter: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_query_execute(query);
@@ -189,21 +165,15 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Where Filter", "[query]") {
     // Filter by key IN (10, 20, 30, 40, 50)
     char* error_message = nullptr;
     LanceDBError result = lancedb_query_where_filter(query, "key IN (\"key_10\", \"key_20\", \"key_30\", \"key_40\", \"key_50\")", &error_message);
-    if (error_message) {
-      INFO("Error setting where filter: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Select "key" and "data" columns
     const char* columns[] = {"key", "data"};
     error_message = nullptr;
     result = lancedb_query_select(query, columns, 2, &error_message);
-    if (error_message) {
-      INFO("Error setting select: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_query_execute(query);
@@ -231,20 +201,14 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Where Filter no Index", "[quer
     const char* columns[] = {"key", "data"};
     char* error_message = nullptr;
     LanceDBError result = lancedb_query_select(query, columns, 2, &error_message);
-    if (error_message) {
-      INFO("Error setting select: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Filter by key = 42 select
     error_message = nullptr;
     result = lancedb_query_where_filter(query, "key = \"key_42\"", &error_message);
-    if (error_message) {
-      INFO("Error setting where filter: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_query_execute(query);
@@ -261,21 +225,15 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Where Filter no Index", "[quer
     // Filter by key IN (10, 20, 30, 40, 50)
     char* error_message = nullptr;
     LanceDBError result = lancedb_query_where_filter(query, "key IN (\"key_10\", \"key_20\", \"key_30\", \"key_40\", \"key_50\")", &error_message);
-    if (error_message) {
-      INFO("Error setting where filter: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Select "key" and "data" columns
     const char* columns[] = {"key", "data"};
     error_message = nullptr;
     result = lancedb_query_select(query, columns, 2, &error_message);
-    if (error_message) {
-      INFO("Error setting select: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_query_execute(query);
@@ -293,20 +251,14 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Where Filter no Index", "[quer
     const char* columns[] = {"key", "data"};
     char* error_message = nullptr;
     LanceDBError result = lancedb_query_select(query, columns, 2, &error_message);
-    if (error_message) {
-      INFO("Error setting select: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Filter by a key that doesn't exist (table has key_0 to key_99)
     error_message = nullptr;
     result = lancedb_query_where_filter(query, "key = \"key_999\"", &error_message);
-    if (error_message) {
-      INFO("Error setting where filter: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
 
     // Execute query
     LanceDBQueryResult* query_result = lancedb_query_execute(query);
@@ -320,11 +272,8 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Where Filter no Index", "[quer
     result = lancedb_query_result_to_arrow(
         query_result, &result_arrays, &result_schema, &count, &error_message);
 
-    if (error_message) {
-      INFO("Error converting to Arrow: " << error_message);
-      lancedb_free_string(error_message);
-    }
     REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
     REQUIRE(count == 0);
     REQUIRE(result_arrays == nullptr);
     REQUIRE(result_schema == nullptr);

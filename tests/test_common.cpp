@@ -38,11 +38,8 @@ void LanceDBFixture::create_empty_table(const std::string& table_name) {
       );
 
   REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
   REQUIRE(table != nullptr);
-
-  if (error_message) {
-    lancedb_free_string(error_message);
-  }
 
   lancedb_table_free(table);
 
@@ -79,11 +76,8 @@ LanceDBTable* LanceDBFixture::create_table_with_data(const std::string& table_na
   );
 
   REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
   REQUIRE(table != nullptr);
-
-  if (error_message) {
-    lancedb_free_string(error_message);
-  }
 
   // Clean up schema
   if (c_schema.release) {
