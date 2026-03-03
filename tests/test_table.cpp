@@ -3,6 +3,7 @@
  * SPDX-FileCopyrightText: Copyright The LanceDB Authors
  */
 
+#include <string>
 #include "test_common.h"
 
 TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Creation", "[table]") {
@@ -657,6 +658,3 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Create Reader", "[table]") {
     }
   }
 }
-
-
-

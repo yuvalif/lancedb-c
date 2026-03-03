@@ -13,11 +13,13 @@ use std::ptr;
 use arrow_array::{Array, RecordBatch, RecordBatchReader, StructArray};
 use arrow_schema::{ArrowError, Schema};
 use futures::TryStreamExt;
+use lance::dataset::transaction::UpdateMapEntry;
 use lancedb::query::{ExecutableQuery, QueryBase};
 
 use crate::connection::{get_runtime, LanceDBTable};
 use crate::error::{
-    handle_error, set_invalid_argument_message, set_unknown_error_message, LanceDBError,
+    handle_error, set_invalid_argument_message, set_not_supported_message,
+    set_unknown_error_message, LanceDBError,
 };
 use crate::types::{LanceDBMergeInsertConfig, LanceDBRecordBatchReader};
 
@@ -742,5 +744,282 @@ pub unsafe extern "C" fn lancedb_free_version_metadata(
             free_version_metadata(&*metadata.add(i));
         }
         libc::free(metadata as *mut libc::c_void);
+    }
+}
+
+/* ========== TABLE METADATA OPERATIONS ========== */
+
+/// Get table metadata as key-value pairs
+///
+/// # Safety
+/// - `table` must be a valid pointer returned from `lancedb_connection_open_table`
+/// - `filter_keys` can be NULL to get all metadata; if non-NULL, `filter_count` must be > 0
+/// - `keys_out`, `values_out`, and `count_out` must be valid pointers
+/// - `error_message` can be NULL to ignore detailed error messages
+///
+/// # Returns
+/// - Error code indicating success or failure
+/// - The caller is responsible for freeing the returned arrays using `lancedb_free_metadata`
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_table_get_metadata(
+    table: *const LanceDBTable,
+    filter_keys: *const *const c_char,
+    filter_count: usize,
+    keys_out: *mut *mut *mut c_char,
+    values_out: *mut *mut *mut c_char,
+    count_out: *mut usize,
+    error_message: *mut *mut c_char,
+) -> LanceDBError {
+    if table.is_null()
+        || keys_out.is_null()
+        || values_out.is_null()
+        || count_out.is_null()
+        || (filter_keys.is_null() && filter_count > 0)
+        || (!filter_keys.is_null() && filter_count == 0)
+    {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    }
+
+    let tbl = &(*table).inner;
+    let runtime = get_runtime();
+
+    let ds = match tbl.dataset() {
+        Some(ds) => ds,
+        None => {
+            set_not_supported_message(error_message);
+            return LanceDBError::NotSupported;
+        }
+    };
+
+    let guard = match runtime.block_on(ds.get()) {
+        Ok(g) => g,
+        Err(e) => return handle_error(&e, error_message),
+    };
+
+    let metadata = &guard.manifest().table_metadata;
+
+    // Collect matching entries: either filtered or all
+    let entries: Vec<(&str, &str)> = if !filter_keys.is_null() && filter_count > 0 {
+        let mut result = Vec::with_capacity(filter_count);
+        for i in 0..filter_count {
+            let key_ptr = *filter_keys.add(i);
+            if key_ptr.is_null() {
+                set_invalid_argument_message(error_message);
+                return LanceDBError::InvalidArgument;
+            }
+            let Ok(key_str) = CStr::from_ptr(key_ptr).to_str() else {
+                set_invalid_argument_message(error_message);
+                return LanceDBError::InvalidArgument;
+            };
+            if let Some(value) = metadata.get(key_str) {
+                result.push((key_str, value.as_str()));
+            }
+        }
+        result
+    } else {
+        metadata
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect()
+    };
+
+    let count = entries.len();
+    *count_out = count;
+
+    if count == 0 {
+        *keys_out = ptr::null_mut();
+        *values_out = ptr::null_mut();
+        return LanceDBError::Success;
+    }
+
+    // Allocate arrays
+    let keys_array = libc::malloc(count * std::mem::size_of::<*mut c_char>()) as *mut *mut c_char;
+    let values_array = libc::malloc(count * std::mem::size_of::<*mut c_char>()) as *mut *mut c_char;
+
+    if keys_array.is_null() || values_array.is_null() {
+        if !keys_array.is_null() {
+            libc::free(keys_array as *mut libc::c_void);
+        }
+        if !values_array.is_null() {
+            libc::free(values_array as *mut libc::c_void);
+        }
+        set_unknown_error_message(error_message);
+        return LanceDBError::Unknown;
+    }
+
+    for (i, (key, value)) in entries.iter().enumerate() {
+        let c_key = CString::new(*key).unwrap_or_default();
+        let c_value = CString::new(*value).unwrap_or_default();
+        *keys_array.add(i) = c_key.into_raw();
+        *values_array.add(i) = c_value.into_raw();
+    }
+
+    *keys_out = keys_array;
+    *values_out = values_array;
+    LanceDBError::Success
+}
+
+/// Set (upsert) table metadata key-value pairs
+///
+/// # Safety
+/// - `table` must be a valid pointer returned from `lancedb_connection_open_table`
+/// - `keys` and `values` must be arrays of valid null-terminated C strings
+/// - `count` must match the actual number of entries in the arrays
+/// - `error_message` can be NULL to ignore detailed error messages
+///
+/// # Returns
+/// - Error code indicating success or failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_table_set_metadata(
+    table: *const LanceDBTable,
+    keys: *const *const c_char,
+    values: *const *const c_char,
+    count: usize,
+    error_message: *mut *mut c_char,
+) -> LanceDBError {
+    if table.is_null() || keys.is_null() || values.is_null() || count == 0 {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    }
+
+    // Extract key-value pairs
+    let mut entries = Vec::with_capacity(count);
+    for i in 0..count {
+        let key_ptr = *keys.add(i);
+        let val_ptr = *values.add(i);
+        if key_ptr.is_null() || val_ptr.is_null() {
+            set_invalid_argument_message(error_message);
+            return LanceDBError::InvalidArgument;
+        }
+
+        let Ok(key_str) = CStr::from_ptr(key_ptr).to_str() else {
+            set_invalid_argument_message(error_message);
+            return LanceDBError::InvalidArgument;
+        };
+        let Ok(val_str) = CStr::from_ptr(val_ptr).to_str() else {
+            set_invalid_argument_message(error_message);
+            return LanceDBError::InvalidArgument;
+        };
+
+        entries.push(UpdateMapEntry {
+            key: key_str.to_string(),
+            value: Some(val_str.to_string()),
+        });
+    }
+
+    let tbl = &(*table).inner;
+    let runtime = get_runtime();
+
+    let ds = match tbl.dataset() {
+        Some(ds) => ds,
+        None => {
+            set_not_supported_message(error_message);
+            return LanceDBError::NotSupported;
+        }
+    };
+
+    match runtime.block_on(async {
+        let mut guard = ds.get_mut().await?;
+        guard.update_metadata(entries).await?;
+        Ok::<_, lancedb::error::Error>(())
+    }) {
+        Ok(_) => LanceDBError::Success,
+        Err(e) => handle_error(&e, error_message),
+    }
+}
+
+/// Delete table metadata keys
+///
+/// # Safety
+/// - `table` must be a valid pointer returned from `lancedb_connection_open_table`
+/// - `keys` must be an array of valid null-terminated C strings
+/// - `count` must match the actual number of keys in the array
+/// - `error_message` can be NULL to ignore detailed error messages
+///
+/// # Returns
+/// - Error code indicating success or failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_table_delete_metadata(
+    table: *const LanceDBTable,
+    keys: *const *const c_char,
+    count: usize,
+    error_message: *mut *mut c_char,
+) -> LanceDBError {
+    if table.is_null() || keys.is_null() || count == 0 {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    }
+
+    // Extract keys as delete entries (value = None)
+    let mut entries = Vec::with_capacity(count);
+    for i in 0..count {
+        let key_ptr = *keys.add(i);
+        if key_ptr.is_null() {
+            set_invalid_argument_message(error_message);
+            return LanceDBError::InvalidArgument;
+        }
+
+        let Ok(key_str) = CStr::from_ptr(key_ptr).to_str() else {
+            set_invalid_argument_message(error_message);
+            return LanceDBError::InvalidArgument;
+        };
+
+        entries.push(UpdateMapEntry {
+            key: key_str.to_string(),
+            value: None,
+        });
+    }
+
+    let tbl = &(*table).inner;
+    let runtime = get_runtime();
+
+    let ds = match tbl.dataset() {
+        Some(ds) => ds,
+        None => {
+            set_not_supported_message(error_message);
+            return LanceDBError::NotSupported;
+        }
+    };
+
+    match runtime.block_on(async {
+        let mut guard = ds.get_mut().await?;
+        guard.update_metadata(entries).await?;
+        Ok::<_, lancedb::error::Error>(())
+    }) {
+        Ok(_) => LanceDBError::Success,
+        Err(e) => handle_error(&e, error_message),
+    }
+}
+
+/// Free metadata arrays returned by lancedb_table_get_metadata
+///
+/// # Safety
+/// - `keys` and `values` must be pointers returned by `lancedb_table_get_metadata`
+/// - `count` must match the count returned by `lancedb_table_get_metadata`
+/// - Safe to call with NULL pointers
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_free_metadata(
+    keys: *mut *mut c_char,
+    values: *mut *mut c_char,
+    count: usize,
+) {
+    if !keys.is_null() {
+        for i in 0..count {
+            let key_ptr = *keys.add(i);
+            if !key_ptr.is_null() {
+                let _ = CString::from_raw(key_ptr);
+            }
+        }
+        libc::free(keys as *mut libc::c_void);
+    }
+    if !values.is_null() {
+        for i in 0..count {
+            let val_ptr = *values.add(i);
+            if !val_ptr.is_null() {
+                let _ = CString::from_raw(val_ptr);
+            }
+        }
+        libc::free(values as *mut libc::c_void);
     }
 }
