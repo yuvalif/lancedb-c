@@ -6,7 +6,7 @@
 //! This module provides all table operations using Arrow-only APIs,
 //! combining both simple and full table functionality.
 
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
 
@@ -547,5 +547,200 @@ pub unsafe extern "C" fn lancedb_table_nearest_to(
             LanceDBError::Success
         }
         Err(e) => handle_error(&e, error_message),
+    }
+}
+
+/// C-compatible version information struct
+#[repr(C)]
+pub struct LanceDBVersion {
+    pub version: u64,
+    pub timestamp_seconds: i64,
+    pub timestamp_nanos: u32,
+}
+
+/// C-compatible per-version metadata struct
+#[repr(C)]
+pub struct LanceDBVersionMetadata {
+    pub keys: *mut *mut c_char,
+    pub values: *mut *mut c_char,
+    pub count: usize,
+}
+
+/// List all versions of the table
+///
+/// # Safety
+/// - `table` must be a valid pointer returned from `lancedb_connection_open_table`
+/// - `versions_out` must be a valid pointer to receive the array of LanceDBVersion structs
+/// - `metadata_out` can be NULL to skip per-version metadata
+/// - `count_out` must be a valid pointer to receive the count
+/// - `error_message` can be NULL to ignore detailed error messages
+///
+/// # Returns
+/// - Error code indicating success or failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_table_list_versions(
+    table: *const LanceDBTable,
+    versions_out: *mut *mut LanceDBVersion,
+    metadata_out: *mut *mut LanceDBVersionMetadata,
+    count_out: *mut usize,
+    error_message: *mut *mut c_char,
+) -> LanceDBError {
+    if table.is_null() || versions_out.is_null() || count_out.is_null() {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    }
+
+    let tbl = &(*table).inner;
+    let runtime = get_runtime();
+    let include_metadata = !metadata_out.is_null();
+
+    match runtime.block_on(tbl.list_versions()) {
+        Ok(versions) => {
+            let count = versions.len();
+            *count_out = count;
+
+            if count == 0 {
+                *versions_out = ptr::null_mut();
+                if include_metadata {
+                    *metadata_out = ptr::null_mut();
+                }
+                return LanceDBError::Success;
+            }
+
+            // Allocate array of LanceDBVersion structs
+            let versions_array =
+                libc::malloc(count * std::mem::size_of::<LanceDBVersion>()) as *mut LanceDBVersion;
+            if versions_array.is_null() {
+                set_unknown_error_message(error_message);
+                return LanceDBError::Unknown;
+            }
+
+            // Allocate metadata array if requested
+            let metadata_array = if include_metadata {
+                let arr = libc::malloc(count * std::mem::size_of::<LanceDBVersionMetadata>())
+                    as *mut LanceDBVersionMetadata;
+                if arr.is_null() {
+                    libc::free(versions_array as *mut libc::c_void);
+                    set_unknown_error_message(error_message);
+                    return LanceDBError::Unknown;
+                }
+                arr
+            } else {
+                ptr::null_mut()
+            };
+
+            for (i, ver) in versions.into_iter().enumerate() {
+                let dest = &mut *versions_array.add(i);
+                dest.version = ver.version;
+                dest.timestamp_seconds = ver.timestamp.timestamp();
+                dest.timestamp_nanos = ver.timestamp.timestamp_subsec_nanos();
+
+                if include_metadata {
+                    let md = &mut *metadata_array.add(i);
+                    let metadata_count = ver.metadata.len();
+                    md.count = metadata_count;
+
+                    if metadata_count == 0 {
+                        md.keys = ptr::null_mut();
+                        md.values = ptr::null_mut();
+                    } else {
+                        let keys_array =
+                            libc::malloc(metadata_count * std::mem::size_of::<*mut c_char>())
+                                as *mut *mut c_char;
+                        let values_array =
+                            libc::malloc(metadata_count * std::mem::size_of::<*mut c_char>())
+                                as *mut *mut c_char;
+
+                        if keys_array.is_null() || values_array.is_null() {
+                            if !keys_array.is_null() {
+                                libc::free(keys_array as *mut libc::c_void);
+                            }
+                            if !values_array.is_null() {
+                                libc::free(values_array as *mut libc::c_void);
+                            }
+                            // Clean up previously allocated metadata
+                            for j in 0..i {
+                                free_version_metadata(&*metadata_array.add(j));
+                            }
+                            libc::free(metadata_array as *mut libc::c_void);
+                            libc::free(versions_array as *mut libc::c_void);
+                            set_unknown_error_message(error_message);
+                            return LanceDBError::Unknown;
+                        }
+
+                        for (j, (key, value)) in ver.metadata.into_iter().enumerate() {
+                            let c_key = CString::new(key).unwrap_or_default();
+                            let c_value = CString::new(value).unwrap_or_default();
+                            *keys_array.add(j) = c_key.into_raw();
+                            *values_array.add(j) = c_value.into_raw();
+                        }
+
+                        md.keys = keys_array;
+                        md.values = values_array;
+                    }
+                }
+            }
+
+            *versions_out = versions_array;
+            if include_metadata {
+                *metadata_out = metadata_array;
+            }
+            LanceDBError::Success
+        }
+        Err(e) => handle_error(&e, error_message),
+    }
+}
+
+/// Helper to free metadata arrays of a single LanceDBVersionMetadata
+unsafe fn free_version_metadata(md: &LanceDBVersionMetadata) {
+    if !md.keys.is_null() {
+        for j in 0..md.count {
+            let key_ptr = *md.keys.add(j);
+            if !key_ptr.is_null() {
+                let _ = CString::from_raw(key_ptr);
+            }
+        }
+        libc::free(md.keys as *mut libc::c_void);
+    }
+    if !md.values.is_null() {
+        for j in 0..md.count {
+            let val_ptr = *md.values.add(j);
+            if !val_ptr.is_null() {
+                let _ = CString::from_raw(val_ptr);
+            }
+        }
+        libc::free(md.values as *mut libc::c_void);
+    }
+}
+
+/// Free versions array returned by lancedb_table_list_versions
+///
+/// # Safety
+/// - `versions` must be a pointer returned by `lancedb_table_list_versions`
+/// - `count` must match the count returned by `lancedb_table_list_versions`
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_free_versions(versions: *mut LanceDBVersion, count: usize) {
+    let _ = count;
+    if !versions.is_null() {
+        libc::free(versions as *mut libc::c_void);
+    }
+}
+
+/// Free version metadata array returned by lancedb_table_list_versions
+///
+/// # Safety
+/// - `metadata` must be a pointer returned by `lancedb_table_list_versions`
+/// - `count` must match the count returned by `lancedb_table_list_versions`
+/// - Safe to call with NULL pointer
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_free_version_metadata(
+    metadata: *mut LanceDBVersionMetadata,
+    count: usize,
+) {
+    if !metadata.is_null() {
+        for i in 0..count {
+            free_version_metadata(&*metadata.add(i));
+        }
+        libc::free(metadata as *mut libc::c_void);
     }
 }
