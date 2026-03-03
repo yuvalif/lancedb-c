@@ -3608,9 +3608,17 @@ dependencies = [
  "lance",
  "lance-file",
  "lancedb",
+ "lancedb-s3-object-store",
  "libc",
  "object_store",
  "tokio",
+]
+
+[[package]]
+name = "lancedb-s3-object-store"
+version = "0.1.0"
+dependencies = [
+ "object_store",
 ]
 
 [[package]]

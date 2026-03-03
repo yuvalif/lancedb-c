@@ -11,6 +11,9 @@ keywords = ["database", "vector", "search", "c", "ffi"]
 categories = ["database", "api-bindings"]
 rust-version = "1.78.0"
 
+[workspace]
+members = ["examples/s3_object_store"]
+
 [lib]
 name = "lancedb"
 crate-type = ["cdylib", "staticlib"]
@@ -28,3 +31,7 @@ arrow-schema = "56.2"
 object_store = "0.12"
 futures = "0"
 chrono = "0"
+lancedb-s3-object-store = { path = "examples/s3_object_store", optional = true }
+
+[features]
+s3-helper = ["lancedb-s3-object-store"]

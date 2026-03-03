@@ -1,0 +1,11 @@
+[package]
+name = "lancedb-s3-object-store"
+version = "0.1.0"
+edition = "2021"
+description = "S3 object store helper for lancedb-c examples"
+
+[lib]
+name = "lancedb_s3_object_store"
+
+[dependencies]
+object_store = { version = "0.12", features = ["aws"] }

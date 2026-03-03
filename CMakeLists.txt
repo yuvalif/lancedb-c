@@ -51,8 +51,14 @@ if (BUILD_EXAMPLES OR BUILD_TESTS)
 endif()
 
 # rust-lib target
+if(BUILD_EXAMPLES)
+  set(RUST_FEATURES "--features" "s3-helper")
+else()
+  set(RUST_FEATURES "")
+endif()
+
 add_custom_target(rust-lib ALL
-  COMMAND cargo build ${RUST_BUILD_TYPE} --target-dir "${CMAKE_BINARY_DIR}/target"
+  COMMAND cargo build ${RUST_BUILD_TYPE} -p lancedb-c ${RUST_FEATURES} --target-dir "${CMAKE_BINARY_DIR}/target"
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   COMMENT "Building Rust library..."
   BYPRODUCTS ${LANCEDB_LIB_PATHS}
@@ -116,7 +122,24 @@ if(BUILD_EXAMPLES)
     BUILD_RPATH ${RUST_TARGET_DIR}
   )
 
-  add_custom_target(examples DEPENDS simple full s3)
+  # s3 storage example using object store wrapper
+  # The S3 helper is built into liblancedb via the s3-helper feature flag
+  add_executable(s3_wrapper examples/s3_wrapper.cpp)
+  target_link_libraries(s3_wrapper
+    lancedb
+    Threads::Threads
+    ${ARROW_LIBRARIES}
+  )
+  target_include_directories(s3_wrapper
+    PRIVATE ${ARROW_INCLUDE_DIRS}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_compile_options(s3_wrapper PRIVATE ${ARROW_CFLAGS_OTHER})
+  set_target_properties(s3_wrapper PROPERTIES
+    BUILD_RPATH ${RUST_TARGET_DIR}
+  )
+
+  add_custom_target(examples DEPENDS simple full s3 s3_wrapper)
 endif()
 
 if(BUILD_DOCS)

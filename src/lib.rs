@@ -7,6 +7,9 @@
 //! with C and C++ applications. The API follows standard C conventions with
 //! opaque handles, explicit error codes, and manual memory management.
 
+#[cfg(feature = "s3-helper")]
+extern crate lancedb_s3_object_store;
+
 pub mod connection;
 pub mod error;
 pub mod index;
