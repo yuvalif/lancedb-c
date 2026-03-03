@@ -134,6 +134,69 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table List Versions", "[table]") {
   }
 }
 
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Schema", "[table]") {
+  SECTION("Get schema from table") {
+    constexpr auto row_num = 5;
+    LanceDBTable* table = create_table_with_data("schema_test", row_num, 0);
+    REQUIRE(table != nullptr);
+
+    FFI_ArrowSchema* schema_out = nullptr;
+    char* error_message = nullptr;
+
+    LanceDBError result = lancedb_table_arrow_schema(table, &schema_out, &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(schema_out != nullptr);
+
+    // Import the FFI schema into Arrow C++ to verify its contents
+    auto import_result = arrow::ImportSchema(reinterpret_cast<ArrowSchema*>(schema_out));
+    REQUIRE(import_result.ok());
+    auto schema = import_result.ValueUnsafe();
+
+    REQUIRE(schema->num_fields() == 2);
+    REQUIRE(schema->field(0)->name() == "key");
+    REQUIRE(schema->field(0)->type()->Equals(arrow::utf8()));
+    REQUIRE(schema->field(1)->name() == "data");
+    REQUIRE(schema->field(1)->type()->Equals(arrow::fixed_size_list(arrow::float32(), TEST_SCHEMA_DIMENSIONS)));
+
+    // ImportSchema releases the schema contents, but we still need to free the outer allocation
+    lancedb_free_arrow_schema(schema_out);
+    lancedb_table_free(table);
+  }
+
+  SECTION("Null table should fail") {
+    FFI_ArrowSchema* schema_out = nullptr;
+    char* error_message = nullptr;
+
+    LanceDBError result = lancedb_table_arrow_schema(nullptr, &schema_out, &error_message);
+
+    REQUIRE(result == LANCEDB_INVALID_ARGUMENT);
+    REQUIRE(error_message != nullptr);
+    lancedb_free_string(error_message);
+  }
+
+  SECTION("Null schema_out should fail") {
+    constexpr auto row_num = 5;
+    LanceDBTable* table = create_table_with_data("schema_null_out", row_num, 0);
+    REQUIRE(table != nullptr);
+
+    char* error_message = nullptr;
+
+    LanceDBError result = lancedb_table_arrow_schema(table, nullptr, &error_message);
+
+    REQUIRE(result == LANCEDB_INVALID_ARGUMENT);
+    REQUIRE(error_message != nullptr);
+    lancedb_free_string(error_message);
+
+    lancedb_table_free(table);
+  }
+
+  SECTION("Free null schema is safe") {
+    lancedb_free_arrow_schema(nullptr);
+  }
+}
+
 TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Metadata", "[table]") {
   // Create a table with data
   const std::string table_name = "metadata_test";
