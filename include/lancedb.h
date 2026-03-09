@@ -7,6 +7,7 @@
 #define LANCEDB_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -211,6 +212,24 @@ typedef struct {
     int when_matched_update_all;     // Update all columns for matched records (1 = true, 0 = false)
     int when_not_matched_insert_all; // Insert all new records (1 = true, 0 = false)
 } LanceDBMergeInsertConfig;
+
+/**
+ * Version information for a table
+ */
+typedef struct {
+    uint64_t version;            // Version number
+    int64_t timestamp_seconds;   // Seconds since Unix epoch (UTC)
+    uint32_t timestamp_nanos;    // Sub-second nanoseconds
+} LanceDBVersion;
+
+/**
+ * Per-version metadata (key-value pairs)
+ */
+typedef struct {
+    char** keys;                 // Array of metadata key strings
+    char** values;               // Array of metadata value strings
+    size_t count;                // Number of metadata key-value pairs
+} LanceDBVersionMetadata;
 
 /**
  * Create a ConnectBuilder for the given URI
@@ -1232,6 +1251,135 @@ void lancedb_free_arrow_arrays(
     struct FFI_ArrowArray** arrays,
     size_t count
 );
+
+/**
+ * List all versions of the table
+ *
+ * @param table - pointer to LanceDBTable
+ * @param versions_out - pointer to receive the array of LanceDBVersion structs
+ * @param metadata_out - optional pointer to receive per-version metadata (NULL to skip)
+ * @param count_out - pointer to receive the number of versions
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Error code indicating success or failure
+ *
+ * On success, versions_out will point to an array of LanceDBVersion structs.
+ * If metadata_out is non-NULL, it will point to a parallel array of
+ * LanceDBVersionMetadata structs (one per version).
+ * The caller must free the returned arrays using lancedb_free_versions()
+ * and lancedb_free_version_metadata() respectively.
+ * If error_message is provided and an error occurs, the caller must free
+ * the error message with lancedb_free_string().
+ */
+LanceDBError lancedb_table_list_versions(
+    const LanceDBTable* table,
+    LanceDBVersion** versions_out,
+    LanceDBVersionMetadata** metadata_out,
+    size_t* count_out,
+    char** error_message
+);
+
+
+/**
+ * Get table metadata as key-value pairs
+ *
+ * @param table - pointer to LanceDBTable
+ * @param filter_keys - optional array of key strings to filter by (NULL to get all metadata)
+ * @param filter_count - number of keys in filter_keys (0 to get all metadata)
+ * @param keys_out - pointer to receive array of metadata key strings
+ * @param values_out - pointer to receive array of metadata value strings
+ * @param count_out - pointer to receive number of metadata entries
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Error code indicating success or failure
+ *
+ * To return all metadata, please set filter_keys to NULL and filter_count to zero.
+ * Any other combination of NULL and zero is considered an error.
+ * Otherwise, only metadata matching the specified keys is returned.
+ * Keys in filter_keys that do not exist in the metadata are silently skipped.
+ * On success, keys_out and values_out will point to parallel arrays of strings.
+ * The caller must free the returned arrays using lancedb_free_metadata().
+ * If error_message is provided and an error occurs, the caller must free
+ * the error message with lancedb_free_string().
+ */
+LanceDBError lancedb_table_get_metadata(
+    const LanceDBTable* table,
+    const char* const* filter_keys,
+    size_t filter_count,
+    char*** keys_out,
+    char*** values_out,
+    size_t* count_out,
+    char** error_message
+);
+
+/**
+ * Set (upsert) table metadata key-value pairs
+ *
+ * @param table - pointer to LanceDBTable
+ * @param keys - array of null-terminated key strings
+ * @param values - array of null-terminated value strings
+ * @param count - number of key-value pairs
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Error code indicating success or failure
+ *
+ * Existing keys will be updated with new values. New keys will be added.
+ * If error_message is provided and an error occurs, the caller must free
+ * the error message with lancedb_free_string().
+ */
+LanceDBError lancedb_table_set_metadata(
+    const LanceDBTable* table,
+    const char* const* keys,
+    const char* const* values,
+    size_t count,
+    char** error_message
+);
+
+/**
+ * Delete table metadata keys
+ *
+ * @param table - pointer to LanceDBTable
+ * @param keys - array of null-terminated key strings to delete
+ * @param count - number of keys to delete
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Error code indicating success or failure
+ *
+ * Keys that do not exist are silently ignored.
+ * If error_message is provided and an error occurs, the caller must free
+ * the error message with lancedb_free_string().
+ */
+LanceDBError lancedb_table_delete_metadata(
+    const LanceDBTable* table,
+    const char* const* keys,
+    size_t count,
+    char** error_message
+);
+
+/**
+ * Free versions array returned by lancedb_table_list_versions
+ *
+ * @param versions - array of LanceDBVersion structs returned by lancedb_table_list_versions
+ * @param count - number of versions in the array
+ */
+void lancedb_free_versions(LanceDBVersion* versions, size_t count);
+
+/**
+ * Free version metadata array returned by lancedb_table_list_versions
+ *
+ * @param metadata - array of LanceDBVersionMetadata structs returned by lancedb_table_list_versions
+ * @param count - number of entries in the array
+ *
+ * Safe to call with NULL pointer.
+ */
+void lancedb_free_version_metadata(LanceDBVersionMetadata* metadata, size_t count);
+
+/**
+ * Free metadata arrays returned by lancedb_table_get_metadata
+ *
+ * @param keys - array of key strings returned by lancedb_table_get_metadata
+ * @param values - array of value strings returned by lancedb_table_get_metadata
+ * @param count - number of entries in the arrays
+ *
+ * Safe to call with NULL pointers.
+ */
+void lancedb_free_metadata(char** keys, char** values, size_t count);
 
 /**
  * Free string returned by LanceDB functions

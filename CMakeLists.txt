@@ -226,6 +226,29 @@ if(BUILD_TESTS)
     BUILD_RPATH ${RUST_TARGET_DIR}
   )
 
+  # Add test executable for table metadata/version tests (runs with valgrind)
+  add_executable(lancedb_table_meta_tests
+    tests/test_main.cpp
+    tests/test_common.cpp
+    tests/test_table_meta.cpp
+  )
+  target_link_libraries(lancedb_table_meta_tests
+    PRIVATE
+    lancedb
+    Catch2::Catch2
+    Threads::Threads
+    ${ARROW_LIBRARIES}
+  )
+  target_include_directories(lancedb_table_meta_tests
+    PRIVATE ${ARROW_INCLUDE_DIRS}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests
+  )
+  target_compile_options(lancedb_table_meta_tests PRIVATE ${ARROW_CFLAGS_OTHER})
+  set_target_properties(lancedb_table_meta_tests PROPERTIES
+    BUILD_RPATH ${RUST_TARGET_DIR}
+  )
+
   # Add test executable for scalar index tests (runs with valgrind)
   add_executable(lancedb_index_tests
     tests/test_main.cpp
@@ -352,6 +375,19 @@ if(BUILD_TESTS)
         --suppressions=${CMAKE_CURRENT_SOURCE_DIR}/valgrind.supp
         $<TARGET_FILE:lancedb_table_tests>
     )
+    # Run table metadata/version tests with valgrind
+    add_test(NAME lancedb_table_meta_tests
+      COMMAND ${VALGRIND_EXECUTABLE}
+        --tool=memcheck
+        --leak-check=full
+        --show-leak-kinds=definite
+        --errors-for-leak-kinds=definite
+        --track-origins=yes
+        --error-exitcode=1
+        --log-file=${CMAKE_BINARY_DIR}/valgrind_table_meta.txt
+        --suppressions=${CMAKE_CURRENT_SOURCE_DIR}/valgrind.supp
+        $<TARGET_FILE:lancedb_table_meta_tests>
+    )
     # Run scalar index tests with valgrind
     add_test(NAME lancedb_index_tests
       COMMAND ${VALGRIND_EXECUTABLE}
@@ -382,6 +418,7 @@ if(BUILD_TESTS)
     message(WARNING "Valgrind not found, running tests without memory checking")
     add_test(NAME lancedb_connection_tests COMMAND lancedb_connection_tests)
     add_test(NAME lancedb_table_tests COMMAND lancedb_table_tests)
+    add_test(NAME lancedb_table_meta_tests COMMAND lancedb_table_meta_tests)
     add_test(NAME lancedb_index_tests COMMAND lancedb_index_tests)
     add_test(NAME lancedb_query_tests COMMAND lancedb_query_tests)
   endif()
