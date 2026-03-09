@@ -24,6 +24,8 @@ TEST_CASE_METHOD(BaseFixture, "LanceDB Connection Builder", "[connection]") {
     REQUIRE(builder != nullptr);
     builder = lancedb_connect_builder_storage_option(builder, "hello", "world");
     REQUIRE(builder != nullptr);
+    builder = lancedb_connect_builder_session(builder, nullptr);
+    REQUIRE(builder != nullptr);
     LanceDBConnection* db = lancedb_connect_builder_execute(builder);
     REQUIRE(db != nullptr);
     lancedb_connection_free(db);
@@ -60,6 +62,81 @@ TEST_CASE_METHOD(BaseFixture, "LanceDB Connection Builder", "[connection]") {
     REQUIRE(builder != nullptr);
     builder = lancedb_connect_builder_storage_option(builder, "hello", NON_UTF8);
     REQUIRE(builder == nullptr);
+  }
+  SECTION("Attach session to connect builder") {
+    LanceDBSession* session = lancedb_session_new(nullptr);
+    REQUIRE(session != nullptr);
+    LanceDBConnectBuilder* builder = lancedb_connect(uri.c_str());
+    REQUIRE(builder != nullptr);
+    builder = lancedb_connect_builder_session(builder, session);
+    REQUIRE(builder != nullptr);
+    LanceDBConnection* db = lancedb_connect_builder_execute(builder);
+    REQUIRE(db != nullptr);
+    lancedb_connection_free(db);
+    lancedb_session_free(session);
+  }
+  SECTION("NULL session on builder should be allowed and use default session") {
+    LanceDBConnectBuilder* builder = lancedb_connect(uri.c_str());
+    REQUIRE(builder != nullptr);
+    builder = lancedb_connect_builder_session(builder, nullptr);
+    REQUIRE(builder != nullptr);
+    LanceDBConnection* db = lancedb_connect_builder_execute(builder);
+    REQUIRE(db != nullptr);
+    lancedb_connection_free(db);
+  }
+}
+
+TEST_CASE_METHOD(BaseFixture, "LanceDB Session", "[connection]") {
+  SECTION("Create and free default session") {
+    LanceDBSession* session = lancedb_session_new(nullptr);
+    REQUIRE(session != nullptr);
+    lancedb_session_free(session);
+  }
+  SECTION("Create session with options") {
+    LanceDBSessionOptions options{};
+    options.index_cache_bytes = 1024 * 1024;
+    options.metadata_cache_bytes = 2 * 1024 * 1024;
+    LanceDBSession* session = lancedb_session_new(&options);
+    REQUIRE(session != nullptr);
+    lancedb_session_free(session);
+  }
+  SECTION("Zero options fallback to defaults") {
+    LanceDBSessionOptions options{};
+    options.index_cache_bytes = 0;
+    options.metadata_cache_bytes = 0;
+    LanceDBSession* session = lancedb_session_new(&options);
+    REQUIRE(session != nullptr);
+    lancedb_session_free(session);
+  }
+  SECTION("Get session cache stats") {
+    LanceDBSession* session = lancedb_session_new(nullptr);
+    REQUIRE(session != nullptr);
+    LanceDBSessionCacheStats index_stats{};
+    LanceDBSessionCacheStats metadata_stats{};
+    char* error_message = nullptr;
+    auto index_result = lancedb_session_index_cache_stats(session, &index_stats, &error_message);
+    REQUIRE(index_result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    auto metadata_result = lancedb_session_metadata_cache_stats(session, &metadata_stats, &error_message);
+    REQUIRE(metadata_result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    lancedb_session_free(session);
+  }
+  SECTION("Get session cache stats with invalid args should fail") {
+    LanceDBSession* session = lancedb_session_new(nullptr);
+    REQUIRE(session != nullptr);
+    LanceDBSessionCacheStats stats{};
+    char* error_message = nullptr;
+    auto result = lancedb_session_index_cache_stats(nullptr, &stats, &error_message);
+    REQUIRE(result == LANCEDB_INVALID_ARGUMENT);
+    REQUIRE(error_message != nullptr);
+    lancedb_free_string(error_message);
+    error_message = nullptr;
+    result = lancedb_session_metadata_cache_stats(session, nullptr, &error_message);
+    REQUIRE(result == LANCEDB_INVALID_ARGUMENT);
+    REQUIRE(error_message != nullptr);
+    lancedb_free_string(error_message);
+    lancedb_session_free(session);
   }
   SECTION("Connect failure") {
     // create a regular file at data_dir so that creating the
@@ -412,4 +489,3 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Namespaces", "[connection]") {
     lancedb_free_string(error_message);
   }
 }
-

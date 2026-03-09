@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,6 +48,11 @@ typedef struct LanceDBVectorQuery LanceDBVectorQuery;
  * Opaque handle to a LanceDB QueryResult
  */
 typedef struct LanceDBQueryResult LanceDBQueryResult;
+
+/**
+ * Opaque handle to a LanceDB Session
+ */
+typedef struct LanceDBSession LanceDBSession;
 
 /**
  * Opaque handle to Arrow RecordBatchReader
@@ -214,6 +220,24 @@ typedef struct {
 } LanceDBMergeInsertConfig;
 
 /**
+ * Session creation options
+ */
+typedef struct {
+    size_t index_cache_bytes;        // Index cache size in bytes (0 = default)
+    size_t metadata_cache_bytes;     // Metadata cache size in bytes (0 = default)
+} LanceDBSessionOptions;
+
+/**
+ * Session cache statistics
+ */
+typedef struct {
+    uint64_t hits;          // Number of cache hits
+    uint64_t misses;        // Number of cache misses
+    size_t num_entries;     // Number of entries in cache
+    size_t size_bytes;      // Cache size in bytes
+} LanceDBSessionCacheStats;
+
+/**
  * Version information for a table
  */
 typedef struct {
@@ -271,6 +295,18 @@ LanceDBConnection* lancedb_connect_builder_execute(LanceDBConnectBuilder* builde
  * with unsupported key or value.
  */
 LanceDBConnectBuilder* lancedb_connect_builder_storage_option(LanceDBConnectBuilder* builder, const char* key, const char* value);
+
+/**
+ * Set session for the connection builder
+ *
+ * @param builder - pointer to LanceDBConnectBuilder returned from lancedb_connect()
+ * @param session - pointer to LanceDBSession, or NULL to keep current/default session behavior
+ * @return Non-null pointer to LanceDBConnectBuilder on success, NULL on failure
+ *
+ * The builder is consumed by this function and must not be used after calling.
+ * Passing NULL session is a no-op.
+ */
+LanceDBConnectBuilder* lancedb_connect_builder_session(LanceDBConnectBuilder* builder, const LanceDBSession* session);
 
 /**
  * Free a ConnectBuilder
@@ -541,6 +577,59 @@ void lancedb_free_namespace_list(char** namespaces, size_t count);
  * After calling this function, the connection pointer must not be used.
  */
 void lancedb_connection_free(LanceDBConnection* connection);
+
+/**
+ * Create a new session
+ *
+ * @param options - pointer to LanceDBSessionOptions, or NULL for defaults
+ * @return Non-null pointer to LanceDBSession on success, NULL on failure
+ *
+ * The returned session must be freed with lancedb_session_free().
+ */
+LanceDBSession* lancedb_session_new(const LanceDBSessionOptions* options);
+
+/**
+ * Get index cache stats for a session
+ *
+ * @param session - pointer to LanceDBSession
+ * @param out_stats - pointer to receive session cache statistics
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Error code indicating success or failure
+ *
+ * If error_message is provided and an error occurs, the caller must free
+ * the error message with lancedb_free_string().
+ */
+LanceDBError lancedb_session_index_cache_stats(
+    const LanceDBSession* session,
+    LanceDBSessionCacheStats* out_stats,
+    char** error_message
+);
+
+/**
+ * Get metadata cache stats for a session
+ *
+ * @param session - pointer to LanceDBSession
+ * @param out_stats - pointer to receive session cache statistics
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Error code indicating success or failure
+ *
+ * If error_message is provided and an error occurs, the caller must free
+ * the error message with lancedb_free_string().
+ */
+LanceDBError lancedb_session_metadata_cache_stats(
+    const LanceDBSession* session,
+    LanceDBSessionCacheStats* out_stats,
+    char** error_message
+);
+
+/**
+ * Free a Session
+ *
+ * @param session - pointer to LanceDBSession
+ *
+ * After calling this function, the session pointer must not be used.
+ */
+void lancedb_session_free(LanceDBSession* session);
 
 /**
  * Free a Table
