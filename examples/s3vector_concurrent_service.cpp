@@ -171,6 +171,33 @@ public:
 #define LOG_OP(op, table, vid, msg) Logger::instance().log(Logger::INFO, op, table, vid, msg)
 
 // ============================================================================
+// Scalar Field Definition - user-defined columns beyond key/data/metadata
+// ============================================================================
+
+struct ScalarFieldDef {
+    std::string name;
+    std::string type;  // "string", "int", "float", "bool"
+
+    json to_json() const {
+        return {{"name", name}, {"type", type}};
+    }
+
+    static ScalarFieldDef from_json(const json& j) {
+        ScalarFieldDef f;
+        f.name = j.value("name", "");
+        f.type = j.value("type", "string");
+        return f;
+    }
+
+    std::shared_ptr<arrow::DataType> to_arrow_type() const {
+        if (type == "int")    return arrow::int64();
+        if (type == "float")  return arrow::float64();
+        if (type == "bool")   return arrow::boolean();
+        return arrow::utf8();  // default: string
+    }
+};
+
+// ============================================================================
 // Index Configuration
 // ============================================================================
 
@@ -188,8 +215,11 @@ struct IndexConfig {
     int refine_factor = -1;       // -1 = default
     int ef = -1;                  // -1 = default (for HNSW)
 
+    // User-defined scalar columns (beyond fixed key/data/metadata)
+    std::vector<ScalarFieldDef> scalar_schema;
+
     json to_json() const {
-        return {
+        json j = {
             {"indexType", index_type},
             {"distanceMetric", distance_metric},
             {"numPartitions", num_partitions},
@@ -201,6 +231,12 @@ struct IndexConfig {
             {"refineFactor", refine_factor},
             {"ef", ef}
         };
+        json schema_arr = json::array();
+        for (const auto& f : scalar_schema) {
+            schema_arr.push_back(f.to_json());
+        }
+        j["scalarSchema"] = schema_arr;
+        return j;
     }
 
     static IndexConfig from_json(const json& j) {
@@ -215,6 +251,11 @@ struct IndexConfig {
         if (j.contains("nprobes")) config.nprobes = j["nprobes"];
         if (j.contains("refineFactor")) config.refine_factor = j["refineFactor"];
         if (j.contains("ef")) config.ef = j["ef"];
+        if (j.contains("scalarSchema") && j["scalarSchema"].is_array()) {
+            for (const auto& item : j["scalarSchema"]) {
+                config.scalar_schema.push_back(ScalarFieldDef::from_json(item));
+            }
+        }
         return config;
     }
 
@@ -238,6 +279,7 @@ struct IndexConfig {
 // ============================================================================
 
 class TableIndexState {
+	//NOTE: the index state is stored in a json file on disk (or s3) and updated with file locking to ensure consistency across processes. it tracks the number of insertions and deletions since the last index build, as well as the version of the last build. it also tracks if an index build is currently in progress and the PID of the builder process for crash detection. it should be checked whether the information reside on lancedb engine.
 public:
     std::string bucket_name;
     std::string index_name;
@@ -262,6 +304,7 @@ public:
     mutable std::mutex mutex;
 
     // Check if the builder process is still alive
+    // the is_builder_alive and the kill function is for the purpose of this prototype.
     bool is_builder_alive() const {
         if (!index_build_in_progress || builder_pid == 0) {
             return false;
@@ -377,7 +420,7 @@ public:
 // ============================================================================
 
 namespace utils {
-
+//for the purpose of this prototype(it is not relevant to s3 system)
 bool directory_exists(const std::string& path) {
     struct stat st;
     return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
@@ -458,6 +501,7 @@ std::string get_index_lock_path(const std::string& bucket_name, const std::strin
 // ============================================================================
 
 class FileLock {
+	//NOTE: it is for the purpose of this prototype, no need for that in S3.
 private:
     int fd_ = -1;
     bool locked_ = false;
@@ -596,14 +640,18 @@ ApiResponse make_success(const json& body = json::object()) {
 
 class LanceDBHelper {
 public:
-    static std::shared_ptr<arrow::Schema> create_vector_schema(int dimension) {
-        auto key_field = arrow::field("key", arrow::utf8());
-        auto data_field = arrow::field("data", arrow::fixed_size_list(arrow::float32(), dimension));
-        auto metadata_field = arrow::field("metadata", arrow::utf8());
-	//TODO (below)the table field names and thier type should dynmaic based on the user input, for now we are hardcoding. 
-        auto function_name_field = arrow::field("function_name", arrow::utf8());
-        auto class_name_field = arrow::field("class_name", arrow::utf8());
-        return arrow::schema({key_field, data_field, metadata_field, function_name_field, class_name_field});
+    static std::shared_ptr<arrow::Schema> create_vector_schema(
+            int dimension, const std::vector<ScalarFieldDef>& scalar_schema = {}) {
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+        // Fixed columns
+        fields.push_back(arrow::field("key", arrow::utf8()));
+        fields.push_back(arrow::field("data", arrow::fixed_size_list(arrow::float32(), dimension)));
+        fields.push_back(arrow::field("metadata", arrow::utf8()));
+        // Dynamic scalar columns from user-defined schema
+        for (const auto& sf : scalar_schema) {
+            fields.push_back(arrow::field(sf.name, sf.to_arrow_type()));
+        }
+        return arrow::schema(fields);
     }
 
     static LanceDBConnection* connect(const std::string& db_path) {
@@ -616,8 +664,10 @@ public:
     }
 
     static LanceDBTable* create_table(LanceDBConnection* conn, const std::string& table_name,
-                                       int dimension, char** error_msg) {
-        auto schema = create_vector_schema(dimension);
+                                       int dimension,
+                                       const std::vector<ScalarFieldDef>& scalar_schema,
+                                       char** error_msg) {
+        auto schema = create_vector_schema(dimension, scalar_schema);
         struct ArrowSchema c_schema;
         if (!arrow::ExportSchema(*schema, &c_schema).ok()) {
             return nullptr;
@@ -647,8 +697,8 @@ public:
                            const std::vector<std::string>& keys,
                            const std::vector<std::vector<float>>& vectors,
                            const std::vector<std::string>& metadata_list,
-                           const std::vector<std::string>& function_names,
-                           const std::vector<std::string>& class_names,
+                           const std::vector<ScalarFieldDef>& scalar_schema,
+                           const std::map<std::string, std::vector<json>>& scalar_values,
                            int dimension,
                            std::string& error) {
         if (keys.empty()) {
@@ -656,16 +706,29 @@ public:
             return false;
         }
 
-        auto schema = create_vector_schema(dimension);
+        auto schema = create_vector_schema(dimension, scalar_schema);
 
+        // Fixed builders
         arrow::StringBuilder key_builder;
         arrow::FixedSizeListBuilder data_builder(
             arrow::default_memory_pool(),
             std::make_unique<arrow::FloatBuilder>(),
             dimension);
         arrow::StringBuilder metadata_builder;
-        arrow::StringBuilder function_name_builder;
-        arrow::StringBuilder class_name_builder;
+
+        // Dynamic builders - one per scalar field
+        std::vector<std::unique_ptr<arrow::ArrayBuilder>> scalar_builders;
+        for (const auto& sf : scalar_schema) {
+            if (sf.type == "int") {
+                scalar_builders.push_back(std::make_unique<arrow::Int64Builder>());
+            } else if (sf.type == "float") {
+                scalar_builders.push_back(std::make_unique<arrow::DoubleBuilder>());
+            } else if (sf.type == "bool") {
+                scalar_builders.push_back(std::make_unique<arrow::BooleanBuilder>());
+            } else {
+                scalar_builders.push_back(std::make_unique<arrow::StringBuilder>());
+            }
+        }
 
         for (size_t i = 0; i < keys.size(); i++) {
             if (!key_builder.Append(keys[i]).ok()) {
@@ -690,30 +753,86 @@ public:
                 return false;
             }
 
-            std::string fn = (i < function_names.size()) ? function_names[i] : "";
-            if (!function_name_builder.Append(fn).ok()) {
-                error = "Failed to append function_name";
-                return false;
-            }
+            // Append dynamic scalar values
+            for (size_t col = 0; col < scalar_schema.size(); col++) {
+                const auto& sf = scalar_schema[col];
+                auto it = scalar_values.find(sf.name);
+                bool has_value = (it != scalar_values.end() && i < it->second.size()
+                                  && !it->second[i].is_null());
 
-            std::string cn = (i < class_names.size()) ? class_names[i] : "";
-            if (!class_name_builder.Append(cn).ok()) {
-                error = "Failed to append class_name";
-                return false;
+                if (sf.type == "string") {
+                    auto* sb = static_cast<arrow::StringBuilder*>(scalar_builders[col].get());
+                    if (has_value && it->second[i].is_string()) {
+                        if (!sb->Append(it->second[i].get<std::string>()).ok()) {
+                            error = "Failed to append " + sf.name;
+                            return false;
+                        }
+                    } else {
+                        if (!sb->AppendNull().ok()) {
+                            error = "Failed to append null " + sf.name;
+                            return false;
+                        }
+                    }
+                } else if (sf.type == "int") {
+                    auto* ib = static_cast<arrow::Int64Builder*>(scalar_builders[col].get());
+                    if (has_value && it->second[i].is_number_integer()) {
+                        if (!ib->Append(it->second[i].get<int64_t>()).ok()) {
+                            error = "Failed to append " + sf.name;
+                            return false;
+                        }
+                    } else {
+                        if (!ib->AppendNull().ok()) {
+                            error = "Failed to append null " + sf.name;
+                            return false;
+                        }
+                    }
+                } else if (sf.type == "float") {
+                    auto* fb = static_cast<arrow::DoubleBuilder*>(scalar_builders[col].get());
+                    if (has_value && it->second[i].is_number()) {
+                        if (!fb->Append(it->second[i].get<double>()).ok()) {
+                            error = "Failed to append " + sf.name;
+                            return false;
+                        }
+                    } else {
+                        if (!fb->AppendNull().ok()) {
+                            error = "Failed to append null " + sf.name;
+                            return false;
+                        }
+                    }
+                } else if (sf.type == "bool") {
+                    auto* bb = static_cast<arrow::BooleanBuilder*>(scalar_builders[col].get());
+                    if (has_value && it->second[i].is_boolean()) {
+                        if (!bb->Append(it->second[i].get<bool>()).ok()) {
+                            error = "Failed to append " + sf.name;
+                            return false;
+                        }
+                    } else {
+                        if (!bb->AppendNull().ok()) {
+                            error = "Failed to append null " + sf.name;
+                            return false;
+                        }
+                    }
+                }
             }
         }
 
+        // Finish fixed arrays
         std::shared_ptr<arrow::Array> key_array, data_array, metadata_array;
-        std::shared_ptr<arrow::Array> function_name_array, class_name_array;
         (void)key_builder.Finish(&key_array);
         (void)data_builder.Finish(&data_array);
         (void)metadata_builder.Finish(&metadata_array);
-        (void)function_name_builder.Finish(&function_name_array);
-        (void)class_name_builder.Finish(&class_name_array);
 
-	//TODO the arrow::RecordBatch::Make should be dynamic based on the user input, for now we are hardcoding the field names and their type.
-        auto record_batch = arrow::RecordBatch::Make(
-            schema, keys.size(), {key_array, data_array, metadata_array, function_name_array, class_name_array});
+        // Build dynamic column arrays
+        std::vector<std::shared_ptr<arrow::Array>> all_arrays = {
+            key_array, data_array, metadata_array
+        };
+        for (auto& builder : scalar_builders) {
+            std::shared_ptr<arrow::Array> arr;
+            (void)builder->Finish(&arr);
+            all_arrays.push_back(arr);
+        }
+
+        auto record_batch = arrow::RecordBatch::Make(schema, keys.size(), all_arrays);
 
         struct ArrowSchema c_schema;
         struct ArrowArray c_array;
@@ -752,6 +871,7 @@ public:
         std::vector<float> data;
         std::string metadata;
         float distance = 0.0f;
+        std::map<std::string, json> scalar_fields;  // dynamic columns
     };
 
     static std::vector<QueryResult> query_vectors(
@@ -885,6 +1005,30 @@ public:
                                 batch->column(distance_idx));
                             if (!distance_array->IsNull(row)) {
                                 result.distance = distance_array->Value(row);
+                            }
+                        }
+
+                        // Extract dynamic scalar columns
+                        for (const auto& sf : config.scalar_schema) {
+                            int col_idx = schema->GetFieldIndex(sf.name);
+                            if (col_idx >= 0 && !batch->column(col_idx)->IsNull(row)) {
+                                if (sf.type == "string") {
+                                    auto arr = std::static_pointer_cast<arrow::StringArray>(
+                                        batch->column(col_idx));
+                                    result.scalar_fields[sf.name] = arr->GetString(row);
+                                } else if (sf.type == "int") {
+                                    auto arr = std::static_pointer_cast<arrow::Int64Array>(
+                                        batch->column(col_idx));
+                                    result.scalar_fields[sf.name] = arr->Value(row);
+                                } else if (sf.type == "float") {
+                                    auto arr = std::static_pointer_cast<arrow::DoubleArray>(
+                                        batch->column(col_idx));
+                                    result.scalar_fields[sf.name] = arr->Value(row);
+                                } else if (sf.type == "bool") {
+                                    auto arr = std::static_pointer_cast<arrow::BooleanArray>(
+                                        batch->column(col_idx));
+                                    result.scalar_fields[sf.name] = arr->Value(row);
+                                }
                             }
                         }
 
@@ -1145,6 +1289,7 @@ public:
     // Update state counters with file locking (called after PUT/DELETE)
     void update_state_with_lock(std::shared_ptr<TableIndexState> state,
                                  size_t insertions, size_t deletions) {
+	    // NOTE: upon using the index-statistics extracted from lancedb engine, this function is obselete.
         std::string lock_path = utils::get_index_lock_path(state->bucket_name, state->index_name);
         FileLock lock(lock_path);
 
@@ -1174,6 +1319,7 @@ public:
     }
 
 private:
+    //NOTE: the index state can be retrieved from the lancedb engine, on later versions the index state will be persisted in the lancedb metadata, and this function can be removed
     void reload_state_from_disk(std::shared_ptr<TableIndexState> state) {
         std::string state_path = utils::get_index_state_path(state->bucket_name, state->index_name);
         std::string state_str = utils::read_file(state_path);
@@ -1212,11 +1358,14 @@ private:
         vec_config.distance_type = state->config.to_lancedb_distance();
         vec_config.accelerator = state->config.accelerator.empty() ?
                                   nullptr : state->config.accelerator.c_str();
+	/// what is the impact of replace? does it always build from scratch? or it can reuse existing index data and just update the changed vectors?
         vec_config.replace = 1;  // Always replace existing index
 
         // Create the vector index
         const char* columns[] = {"data"};
         char* err_msg = nullptr;
+
+	// 
         LanceDBError result = lancedb_table_create_vector_index(
             table, columns, 1, state->config.to_lancedb_type(), &vec_config, &err_msg);
 
@@ -1252,7 +1401,7 @@ ApiResponse CreateVectorBucket(const json& request) {
             "Vector bucket '" + bucket_name + "' already exists");
     }
 
-    if (!utils::create_directories(bucket_path)) {
+    if (!utils::create_directories(bucket_path)) {//NOTE: in S3 system there is no real concept of directories, we create a placeholder file to represent the bucket
         return make_error(500, "InternalServerException",
             "Failed to create vector bucket directory");
     }
@@ -1297,6 +1446,30 @@ ApiResponse CreateIndex(const json& request) {
     if (request.contains("refineFactor")) config.refine_factor = request["refineFactor"];
     if (request.contains("ef")) config.ef = request["ef"];
 
+    // Parse dynamic scalar schema
+    if (request.contains("scalarSchema") && request["scalarSchema"].is_array()) {
+        for (const auto& item : request["scalarSchema"]) {
+            ScalarFieldDef field;
+            field.name = item.value("name", "");
+            field.type = item.value("type", "string");
+            if (field.name.empty()) continue;
+            // Reject reserved column names
+            if (field.name == "key" || field.name == "data" ||
+                field.name == "metadata" || field.name == "_distance") {
+                return make_error(400, "ValidationException",
+                    "'" + field.name + "' is a reserved column name");
+            }
+            // Validate type
+            if (field.type != "string" && field.type != "int" &&
+                field.type != "float" && field.type != "bool") {
+                return make_error(400, "ValidationException",
+                    "Invalid type '" + field.type + "' for field '" + field.name +
+                    "'. Must be string, int, float, or bool");
+            }
+            config.scalar_schema.push_back(field);
+        }
+    }
+
     // Default distance metric
     if (!request.contains("distanceMetric")) {
         config.distance_metric = "euclidean";
@@ -1321,7 +1494,9 @@ ApiResponse CreateIndex(const json& request) {
     }
 
     char* err_msg = nullptr;
-    LanceDBTable* table = LanceDBHelper::create_table(conn, "vectors", dimension, &err_msg);
+    //TODO : why the table name is hardcoded? we should allow custom table name in the request. it limits the number of tables.
+    LanceDBTable* table = LanceDBHelper::create_table(conn, "vectors", dimension,
+                                                       config.scalar_schema, &err_msg);
     if (!table) {
         std::string error_str = err_msg ? err_msg : "Failed to create table";
         if (err_msg) lancedb_free_string(err_msg);
@@ -1383,12 +1558,17 @@ ApiResponse PutVectors(const json& request) {
             "Index '" + index_name + "' not found or dimension not configured");
     }
 
+    // Get dynamic scalar schema from stored config
+    const auto& scalar_schema = state->config.scalar_schema;
+
     // Parse vectors
     std::vector<std::string> keys;
     std::vector<std::vector<float>> vectors;
     std::vector<std::string> metadata_list;
-    std::vector<std::string> function_names;
-    std::vector<std::string> class_names;
+    std::map<std::string, std::vector<json>> scalar_values;
+    for (const auto& sf : scalar_schema) {
+        scalar_values[sf.name] = {};
+    }
 
     const auto& vectors_array = request["vectors"];
     if (vectors_array.size() > 500) {
@@ -1433,28 +1613,30 @@ ApiResponse PutVectors(const json& request) {
         }
         metadata_list.push_back(metadata);
 
-        std::string function_name = "";
-        std::string class_name = "";
+        // Extract dynamic scalar field values
+        for (const auto& sf : scalar_schema) {
+            json value = nullptr;
 
-        if (vec.contains("function_name") && vec["function_name"].is_string()) {
-            function_name = vec["function_name"].get<std::string>();
-        }
-        if (vec.contains("class_name") && vec["class_name"].is_string()) {
-            class_name = vec["class_name"].get<std::string>();
-        }
-
-        if (vec.contains("metadata") && vec["metadata"].is_object()) {
-            const auto& meta = vec["metadata"];
-            if (function_name.empty() && meta.contains("function_name") && meta["function_name"].is_string()) {
-                function_name = meta["function_name"].get<std::string>();
+            // 1. Check top-level vector JSON
+            if (vec.contains(sf.name) && !vec[sf.name].is_null()) {
+                value = vec[sf.name];
             }
-            if (class_name.empty() && meta.contains("class_name") && meta["class_name"].is_string()) {
-                class_name = meta["class_name"].get<std::string>();
+            // 2. Check metadata object
+            else if (vec.contains("metadata") && vec["metadata"].is_object()) {
+                const auto& meta = vec["metadata"];
+                if (meta.contains(sf.name) && !meta[sf.name].is_null()) {
+                    value = meta[sf.name];
+                }
+                // 3. Check nested metadata.metadata (test data uses this structure)
+                else if (meta.contains("metadata") && meta["metadata"].is_object()) {
+                    const auto& nested = meta["metadata"];
+                    if (nested.contains(sf.name) && !nested[sf.name].is_null()) {
+                        value = nested[sf.name];
+                    }
+                }
             }
+            scalar_values[sf.name].push_back(value);
         }
-
-        function_names.push_back(function_name);
-        class_names.push_back(class_name);
     }
 
     // Connect to LanceDB
@@ -1465,7 +1647,7 @@ ApiResponse PutVectors(const json& request) {
             "Failed to connect to index database");
     }
 
-    LanceDBTable* table = LanceDBHelper::open_table(conn, "vectors");
+    LanceDBTable* table = LanceDBHelper::open_table(conn, "vectors");//TODO : its hardcoded to open "vectors" table, we should allow custom table name in the request. it limits the number of tables.
     if (!table) {
         lancedb_connection_free(conn);
         return make_error(500, "InternalServerException",
@@ -1474,7 +1656,7 @@ ApiResponse PutVectors(const json& request) {
 
     std::string error;
     bool success = LanceDBHelper::add_vectors(table, keys, vectors, metadata_list,
-                                               function_names, class_names, dimension, error);
+                                               scalar_schema, scalar_values, dimension, error);
 
     lancedb_table_free(table);
     lancedb_connection_free(conn);
@@ -1488,6 +1670,9 @@ ApiResponse PutVectors(const json& request) {
         LOG_OP("PUT_VECTOR", index_name, key, "Vector inserted");
     }
 
+    //TODO : upon rebuild is triggered, the ack should be sent immediately without waiting for the build to complete. The build can be done asynchronously and the client can be notified of completion via a callback or by checking the index state in subsequent requests.
+    // to check the option to fork and run the build in a child process, allowing the parent process to return the response immediately while the child process handles the index building. This would involve some inter-process communication to update the index state once the build is complete.
+ 
     // Update state with file locking (record insertions)
     IndexBuilder::instance().update_state_with_lock(state, keys.size(), 0);
 
@@ -1702,6 +1887,11 @@ ApiResponse QueryVectors(const json& request) {
             } catch (...) {
                 vec["metadata"] = result.metadata;
             }
+        }
+
+        // Include dynamic scalar fields in response
+        for (const auto& [fname, fval] : result.scalar_fields) {
+            vec[fname] = fval;
         }
 
         vectors_response.push_back(vec);
