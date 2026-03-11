@@ -11,7 +11,6 @@
 #include "lancedb.h"
 #include <random>
 #include <sstream>
-#include <iomanip>
 #include <chrono>
 
 // Helper function to check if directory exists

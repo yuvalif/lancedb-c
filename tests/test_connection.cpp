@@ -5,6 +5,7 @@
 
 #include "test_common.h"
 #include <set>
+#include <fstream>
 
 static const char* NON_UTF8 = "\x80\xFF\xFE\xAB";
 
@@ -59,6 +60,16 @@ TEST_CASE_METHOD(BaseFixture, "LanceDB Connection Builder", "[connection]") {
     REQUIRE(builder != nullptr);
     builder = lancedb_connect_builder_storage_option(builder, "hello", NON_UTF8);
     REQUIRE(builder == nullptr);
+  }
+  SECTION("Connect failure") {
+    // create a regular file at data_dir so that creating the
+    // subdirectory "test-lancedb" inside it fails on all platforms.
+    std::ofstream blocker(data_dir);
+    blocker.close();
+
+    LanceDBConnectBuilder* builder = lancedb_connect(uri.c_str());
+    LanceDBConnection* db = lancedb_connect_builder_execute(builder);
+    REQUIRE(db == nullptr);
   }
 }
 
