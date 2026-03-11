@@ -35,6 +35,28 @@ endif()
 option(BUILD_EXAMPLES "Build examples" OFF)
 option(BUILD_DOCS "Build documentation" OFF)
 option(BUILD_TESTS "Build tests" OFF)
+option(BUILD_COVERAGE "Enable Rust code coverage reporting (requires llvm-tools-preview)" OFF)
+
+if(BUILD_COVERAGE)
+  if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message(WARNING "Code coverage results with an optimized build may be misleading. Consider using -DCMAKE_BUILD_TYPE=Debug")
+  endif()
+
+  # Find llvm-profdata and llvm-cov via rustc sysroot or system PATH
+  execute_process(COMMAND rustc --print sysroot OUTPUT_VARIABLE RUST_SYSROOT OUTPUT_STRIP_TRAILING_WHITESPACE)
+  execute_process(COMMAND rustc -vV OUTPUT_VARIABLE RUSTC_VERSION_INFO OUTPUT_STRIP_TRAILING_WHITESPACE)
+  string(REGEX MATCH "host: ([a-zA-Z0-9_-]+)" _match "${RUSTC_VERSION_INFO}")
+  set(RUST_HOST_TRIPLE "${CMAKE_MATCH_1}")
+  find_program(_profdata llvm-profdata HINTS "${RUST_SYSROOT}/lib/rustlib/${RUST_HOST_TRIPLE}/bin" NO_DEFAULT_PATH)
+  find_program(_cov llvm-cov HINTS "${RUST_SYSROOT}/lib/rustlib/${RUST_HOST_TRIPLE}/bin" NO_DEFAULT_PATH)
+  if(_profdata AND _cov)
+    list(GET _profdata 0 LLVM_PROFDATA)
+    list(GET _cov 0 LLVM_COV)
+  else()
+    find_program(LLVM_PROFDATA llvm-profdata REQUIRED)
+    find_program(LLVM_COV llvm-cov REQUIRED)
+  endif()
+endif()
 
 find_package(Threads REQUIRED)
 if (BUILD_EXAMPLES OR BUILD_TESTS)
@@ -51,8 +73,12 @@ if (BUILD_EXAMPLES OR BUILD_TESTS)
 endif()
 
 # rust-lib target
+set(CARGO_BUILD_COMMAND cargo build ${RUST_BUILD_TYPE} --target-dir "${CMAKE_BINARY_DIR}/target")
+if(BUILD_COVERAGE)
+  set(CARGO_BUILD_COMMAND ${CMAKE_COMMAND} -E env "RUSTFLAGS=-C instrument-coverage" ${CARGO_BUILD_COMMAND})
+endif()
 add_custom_target(rust-lib ALL
-  COMMAND cargo build ${RUST_BUILD_TYPE} --target-dir "${CMAKE_BINARY_DIR}/target"
+  COMMAND ${CARGO_BUILD_COMMAND}
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   COMMENT "Building Rust library..."
   BYPRODUCTS ${LANCEDB_LIB_PATHS}
@@ -180,6 +206,8 @@ if(BUILD_TESTS)
     FetchContent_MakeAvailable(Catch2)
   endif()
 
+  set(TEST_TARGETS "")
+
   # Add test executable for connection tests (runs with valgrind)
   add_executable(lancedb_connection_tests
     tests/test_main.cpp
@@ -202,6 +230,7 @@ if(BUILD_TESTS)
   set_target_properties(lancedb_connection_tests PROPERTIES
     BUILD_RPATH ${RUST_TARGET_DIR}
   )
+  list(APPEND TEST_TARGETS lancedb_connection_tests)
 
   # Add test executable for table tests (runs with valgrind)
   add_executable(lancedb_table_tests
@@ -225,6 +254,7 @@ if(BUILD_TESTS)
   set_target_properties(lancedb_table_tests PROPERTIES
     BUILD_RPATH ${RUST_TARGET_DIR}
   )
+  list(APPEND TEST_TARGETS lancedb_table_tests)
 
   # Add test executable for scalar index tests (runs with valgrind)
   add_executable(lancedb_index_tests
@@ -248,6 +278,7 @@ if(BUILD_TESTS)
   set_target_properties(lancedb_index_tests PROPERTIES
     BUILD_RPATH ${RUST_TARGET_DIR}
   )
+  list(APPEND TEST_TARGETS lancedb_index_tests)
 
   # Add test executable for vector tests (runs without valgrind)
   add_executable(lancedb_vector_index_tests
@@ -271,6 +302,7 @@ if(BUILD_TESTS)
   set_target_properties(lancedb_vector_index_tests PROPERTIES
     BUILD_RPATH ${RUST_TARGET_DIR}
   )
+  list(APPEND TEST_TARGETS lancedb_vector_index_tests)
 
   # Add test executable for query tests (runs with valgrind)
   add_executable(lancedb_query_tests
@@ -294,6 +326,7 @@ if(BUILD_TESTS)
   set_target_properties(lancedb_query_tests PROPERTIES
     BUILD_RPATH ${RUST_TARGET_DIR}
   )
+  list(APPEND TEST_TARGETS lancedb_query_tests)
 
   # Add test executable for vector query tests (runs without valgrind)
   add_executable(lancedb_vector_query_tests
@@ -317,6 +350,7 @@ if(BUILD_TESTS)
   set_target_properties(lancedb_vector_query_tests PROPERTIES
     BUILD_RPATH ${RUST_TARGET_DIR}
   )
+  list(APPEND TEST_TARGETS lancedb_vector_query_tests)
 
   # Enable CTest
   enable_testing()
@@ -390,6 +424,36 @@ if(BUILD_TESTS)
   add_test(NAME lancedb_vector_index_tests COMMAND lancedb_vector_index_tests)
   # Run vector query tests WITHOUT valgrind (too slow under valgrind)
   add_test(NAME lancedb_vector_query_tests COMMAND lancedb_vector_query_tests)
+
+  if(BUILD_COVERAGE)
+    set(PROFRAW_DIR "${CMAKE_BINARY_DIR}/profraw")
+    set(PROFDATA_FILE "${CMAKE_BINARY_DIR}/coverage.profdata")
+    set(COVERAGE_REPORT_DIR "${CMAKE_BINARY_DIR}/coverage-report")
+
+    add_custom_target(coverage
+      # Clean old profiling data
+      COMMAND ${CMAKE_COMMAND} -E rm -rf ${PROFRAW_DIR}
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${PROFRAW_DIR}
+      # Run tests via ctest with profiling output directed to profraw dir
+      COMMAND ${CMAKE_COMMAND} -E env "LLVM_PROFILE_FILE=${PROFRAW_DIR}/test_%p_%m.profraw"
+        ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR} -j
+      # Merge profiling data
+      COMMAND sh -c "${LLVM_PROFDATA} merge -sparse ${PROFRAW_DIR}/*.profraw -o ${PROFDATA_FILE}"
+      # Print coverage summary
+      COMMAND ${LLVM_COV} report ${SHARED_LIB_PATH}
+        --instr-profile=${PROFDATA_FILE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/
+      # Generate HTML report
+      COMMAND ${LLVM_COV} show ${SHARED_LIB_PATH}
+        --instr-profile=${PROFDATA_FILE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/
+        --format=html
+        --output-dir=${COVERAGE_REPORT_DIR}
+      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+      DEPENDS ${TEST_TARGETS}
+      COMMENT "Running tests and generating Rust code coverage report..."
+    )
+  endif()
 endif()
 
 add_custom_target(clean-all
@@ -431,6 +495,11 @@ if(BUILD_TESTS)
   message(STATUS "Tests: Enabled")
 else()
   message(STATUS "Tests: Disabled (use -DBUILD_TESTS=ON to enable)")
+endif()
+if(BUILD_COVERAGE)
+  message(STATUS "Coverage: Enabled")
+else()
+  message(STATUS "Coverage: Disabled (use -DBUILD_COVERAGE=ON to enable)")
 endif()
 if(BUILD_DOCS)
   message(STATUS "Documentation: Enabled")

@@ -1,0 +1,104 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config lsb-release wget valgrind
+          wget https://apache.jfrog.io/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
+          sudo apt-get install -y ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
+          sudo apt-get update
+          sudo apt-get install -y libarrow-dev
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -G Ninja -DBUILD_TESTS=ON -DBUILD_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: ninja -C build
+
+      - name: Generate coverage report
+        run: ninja -C build coverage
+
+      - name: Extract coverage percentage
+        id: coverage
+        run: |
+          # Extract line coverage % from the TOTAL row (3rd percentage field = Lines Cover)
+          LLVM_COV=$(find "$(rustc --print sysroot)" -name llvm-cov -type f | head -1)
+          COVERAGE=$("$LLVM_COV" report build/target/debug/liblancedb.so \
+            --instr-profile=build/coverage.profdata \
+            src/ \
+            | grep "^TOTAL" | awk '{for(i=1;i<=NF;i++) if($i ~ /%$/ && count++==2) {gsub(/%/,"",$i); print $i; exit}}')
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+          echo "Line coverage: $COVERAGE%"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: build/coverage-report/
+
+      # On main: save baseline coverage percentage
+      - name: Save baseline coverage
+        if: github.ref == 'refs/heads/main'
+        run: echo "${{ steps.coverage.outputs.percentage }}" > coverage-baseline.txt
+
+      - name: Cache baseline coverage
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: coverage-baseline.txt
+          key: coverage-baseline-${{ github.sha }}
+
+      # On PR: restore baseline and compare
+      - name: Restore baseline coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: coverage-baseline.txt
+          key: coverage-baseline-${{ github.event.pull_request.base.sha }}
+          restore-keys: |
+            coverage-baseline-
+
+      - name: Compare coverage with baseline
+        if: github.event_name == 'pull_request'
+        run: |
+          HEAD_COVERAGE=${{ steps.coverage.outputs.percentage }}
+          if [ -f coverage-baseline.txt ]; then
+            BASE_COVERAGE=$(cat coverage-baseline.txt)
+            echo "Base branch coverage: $BASE_COVERAGE%"
+            echo "PR branch coverage: $HEAD_COVERAGE%"
+            DECREASED=$(echo "$BASE_COVERAGE $HEAD_COVERAGE" | awk '{if ($1 > $2) print "true"; else print "false"}')
+            if [ "$DECREASED" = "true" ]; then
+              echo "::error::Code coverage decreased from $BASE_COVERAGE% to $HEAD_COVERAGE%"
+              exit 1
+            else
+              echo "Coverage is maintained or improved: $BASE_COVERAGE% -> $HEAD_COVERAGE%"
+            fi
+          else
+            echo "No baseline coverage found (first run?). Skipping comparison."
+            echo "Current coverage: $HEAD_COVERAGE%"
+          fi
