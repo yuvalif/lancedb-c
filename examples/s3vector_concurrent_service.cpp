@@ -279,7 +279,10 @@ struct IndexConfig {
 // ============================================================================
 
 class TableIndexState {
-	//NOTE: the index state is stored in a json file on disk (or s3) and updated with file locking to ensure consistency across processes. it tracks the number of insertions and deletions since the last index build, as well as the version of the last build. it also tracks if an index build is currently in progress and the PID of the builder process for crash detection. it should be checked whether the information reside on lancedb engine.
+    // Index configuration and rebuild coordination.
+    // Index statistics (indexed/unindexed row counts) are queried live from LanceDB
+    // via lancedb_table_index_stats() — no external counters needed.
+    // Only build-coordination flags (in_progress, builder_pid) are persisted.
 public:
     std::string bucket_name;
     std::string index_name;
@@ -288,13 +291,9 @@ public:
     IndexConfig config;
     int dimension = 0;
 
-    // State tracking
+    // Build coordination (persisted for crash detection across processes)
     bool index_build_in_progress = false;
-    pid_t builder_pid = 0;  // PID of process doing the build (for crash detection)
-    size_t insertions_since_build = 0;
-    size_t deletions_since_build = 0;
-    size_t rows_at_last_build = 0;
-    unsigned long long version_at_last_build = 0;
+    pid_t builder_pid = 0;
 
     // Thresholds for auto-rebuild
     size_t unindexed_threshold = DEFAULT_UNINDEXED_THRESHOLD;
@@ -303,24 +302,16 @@ public:
     // Mutex for in-process thread safety (not cross-process - use flock for that)
     mutable std::mutex mutex;
 
-    // Check if the builder process is still alive
-    // the is_builder_alive and the kill function is for the purpose of this prototype.
     bool is_builder_alive() const {
         if (!index_build_in_progress || builder_pid == 0) {
             return false;
         }
-        // kill(pid, 0) checks if process exists without sending a signal
         if (kill(builder_pid, 0) == -1) {
-            if (errno == ESRCH) {
-                // Process doesn't exist - it crashed
-                return false;
-            }
-            // EPERM means process exists but we don't have permission (still alive)
+            if (errno == ESRCH) return false;
         }
         return true;
     }
 
-    // Reset crashed builder state
     void reset_crashed_builder() {
         if (index_build_in_progress && !is_builder_alive()) {
             LOG_WARN("INDEX_STATE", index_name,
@@ -330,54 +321,14 @@ public:
         }
     }
 
-    bool needs_rebuild() const {
-        // Don't trigger if already building (and builder is alive)
-        if (index_build_in_progress && is_builder_alive()) {
-            return false;
-        }
-
-        // Check if we have enough new insertions
-        if (insertions_since_build >= unindexed_threshold) {
-            return true;
-        }
-
-        // Check if deletion ratio is too high
-        if (rows_at_last_build > 0) {
-            double deletion_ratio = static_cast<double>(deletions_since_build) /
-                                    static_cast<double>(rows_at_last_build);
-            if (deletion_ratio >= deletion_ratio_threshold) {
-                return true;
-            }
-        }
-
-        // Check if no index exists but we have enough data
-        if (version_at_last_build == 0 && insertions_since_build >= unindexed_threshold) {
-            return true;
-        }
-
-        return false;
-    }
-
-    void record_insertions(size_t count) {
-        insertions_since_build += count;
-    }
-
-    void record_deletions(size_t count) {
-        deletions_since_build += count;
-    }
-
-    void on_index_build_complete(size_t row_count, unsigned long long version) {
-        insertions_since_build = 0;
-        deletions_since_build = 0;
-        rows_at_last_build = row_count;
-        version_at_last_build = version;
-        index_build_in_progress = false;
-        builder_pid = 0;
-    }
-
     void mark_build_started() {
         index_build_in_progress = true;
         builder_pid = getpid();
+    }
+
+    void mark_build_complete() {
+        index_build_in_progress = false;
+        builder_pid = 0;
     }
 
     json to_json() const {
@@ -387,10 +338,6 @@ public:
             {"indexName", index_name},
             {"dimension", dimension},
             {"config", config.to_json()},
-            {"insertionsSinceBuild", insertions_since_build},
-            {"deletionsSinceBuild", deletions_since_build},
-            {"rowsAtLastBuild", rows_at_last_build},
-            {"versionAtLastBuild", version_at_last_build},
             {"indexBuildInProgress", index_build_in_progress},
             {"builderPid", static_cast<int>(builder_pid)},
             {"unindexedThreshold", unindexed_threshold},
@@ -404,10 +351,6 @@ public:
         if (j.contains("indexName")) index_name = j["indexName"];
         if (j.contains("dimension")) dimension = j["dimension"];
         if (j.contains("config")) config = IndexConfig::from_json(j["config"]);
-        if (j.contains("insertionsSinceBuild")) insertions_since_build = j["insertionsSinceBuild"].get<size_t>();
-        if (j.contains("deletionsSinceBuild")) deletions_since_build = j["deletionsSinceBuild"].get<size_t>();
-        if (j.contains("rowsAtLastBuild")) rows_at_last_build = j["rowsAtLastBuild"].get<size_t>();
-        if (j.contains("versionAtLastBuild")) version_at_last_build = j["versionAtLastBuild"].get<unsigned long long>();
         if (j.contains("indexBuildInProgress")) index_build_in_progress = j["indexBuildInProgress"].get<bool>();
         if (j.contains("builderPid")) builder_pid = static_cast<pid_t>(j["builderPid"].get<int>());
         if (j.contains("unindexedThreshold")) unindexed_threshold = j["unindexedThreshold"];
@@ -500,18 +443,35 @@ std::string get_index_lock_path(const std::string& bucket_name, const std::strin
 // File Lock RAII Class - Uses flock for cross-process synchronization
 // ============================================================================
 
-class FileLock {
+//TODO use an abstraction of the locking method, so it can be easily replaced by s3-conditional-write or other mechanism when we move to s3 system. the file lock is for the purpose of this prototype, on s3 storage system it can be achived by s3-conditional-write. the class FileLock implementent the abstraction base class.
+//
+
+class Base_lock {
+	//purpose: it is an abstraction of the locking mechanism, so it can be easily replaced by s3-conditional-write or other mechanism when we move to s3 system. the file lock is for the purpose of this prototype, on s3 storage system it can be achived by s3-conditional-write. the class FileLock implementent the abstraction base class.
+public:
+    virtual ~Base_lock() = default;
+    virtual bool lock_exclusive() = 0;
+    virtual bool try_lock_exclusive() = 0;
+    virtual void unlock() = 0;
+    virtual bool is_locked() const = 0;
+    virtual bool is_valid() const = 0;
+};
+
+class FileLock : public Base_lock {
 	//NOTE: it is for the purpose of this prototype, no need for that in S3.
 private:
     int fd_ = -1;
     bool locked_ = false;
     std::string path_;
-
+    const std::string defult_lock_path_ = "/tmp/s3vectors/default_index.lock";
 public:
     FileLock() = default;
 
     explicit FileLock(const std::string& path) : path_(path) {
         // Create parent directory if needed
+	if(path.empty()){
+	    path_ = defult_lock_path_;
+	}
         size_t last_slash = path.rfind('/');
         if (last_slash != std::string::npos) {
             std::string dir = path.substr(0, last_slash);
@@ -590,6 +550,37 @@ public:
 
     bool is_locked() const { return locked_; }
     bool is_valid() const { return fd_ >= 0; }
+};
+
+
+//TODO : it need to create a fronetend locker class to handle the locking mechanism, and the FileLock class is just one implementation of the locking mechanism. the frontent locker class can be used by the service to acquire locks without worrying about the underlying implementation, and it can be easily extended to support other locking mechanisms in the future.
+class FrontendLocker {
+private:
+    std::unique_ptr<Base_lock> lock_;
+public:
+    FrontendLocker(const std::string& lock_path) {
+	lock_ = std::make_unique<FileLock>(lock_path);//or other lock implementation based on the configuration (s3 conditional write or other mechanism)
+    }
+
+    bool lock_exclusive() {
+	return lock_->lock_exclusive();
+    }
+
+    bool try_lock_exclusive() {
+	return lock_->try_lock_exclusive();
+    }
+
+    void unlock() {
+	lock_->unlock();
+    }
+
+    bool is_locked() const {
+	return lock_->is_locked();
+    }
+
+    bool is_valid() const {
+	return lock_->is_valid();
+    }
 };
 
 // ============================================================================
@@ -1043,6 +1034,59 @@ public:
 
         return results;
     }
+
+    // Get the first index name from the table (LanceDB auto-generates names like "data_idx")
+    static std::string get_first_index_name(LanceDBTable* table) {
+        char** indices = nullptr;
+        size_t count = 0;
+        if (lancedb_table_list_indices(table, &indices, &count, nullptr) == LANCEDB_SUCCESS && count > 0 && indices) {
+            std::string name(indices[0]);
+            lancedb_free_index_list(indices, count);
+            return name;
+        }
+        return "";
+    }
+
+    // Query index statistics directly from LanceDB engine
+    static bool get_index_stats(LanceDBTable* table, LanceDBIndexStats& stats) {
+        std::string idx_name = get_first_index_name(table);
+        if (idx_name.empty()) {
+            // No index exists yet
+            stats.num_indexed_rows = 0;
+            stats.num_unindexed_rows = lancedb_table_count_rows(table);
+            stats.num_indices = 0;
+            return true;
+        }
+        char* err_msg = nullptr;
+        LanceDBError result = lancedb_table_index_stats(table, idx_name.c_str(), &stats, &err_msg);
+        if (err_msg) lancedb_free_string(err_msg);
+        if (result == LANCEDB_INDEX_NOT_FOUND) {
+            stats.num_indexed_rows = 0;
+            stats.num_unindexed_rows = lancedb_table_count_rows(table);
+            stats.num_indices = 0;
+            return true;
+        }
+        return result == LANCEDB_SUCCESS;
+    }
+
+    // Get index stats by opening a connection to the DB
+    static bool get_index_stats_for(const std::string& bucket, const std::string& index,
+                                     LanceDBIndexStats& stats) {
+        std::string db_path = utils::get_index_db_path(bucket, index);
+        LanceDBConnection* conn = connect(db_path);
+        if (!conn) return false;
+
+        LanceDBTable* table = open_table(conn, "vectors");
+        if (!table) {
+            lancedb_connection_free(conn);
+            return false;
+        }
+
+        bool ok = get_index_stats(table, stats);
+        lancedb_table_free(table);
+        lancedb_connection_free(conn);
+        return ok;
+    }
 };
 
 // ============================================================================
@@ -1110,6 +1154,8 @@ public:
 // Index Builder - Synchronous build with file locking
 // ============================================================================
 
+//TODO: IndexBuilder should not use Filelock directly, it should use the Base_lock abstraction, so that we can replace the locking mechanism when we move to s3 system. the FileLock is for the purpose of this prototype, on s3 storage system it can be achived by s3-conditional-write.
+
 class IndexBuilder {
 public:
     static IndexBuilder& instance() {
@@ -1117,220 +1163,106 @@ public:
         return builder;
     }
 
-    // Check if rebuild is needed and trigger if so (with file locking)
+    // Check if rebuild is needed (using LanceDB index_stats) and trigger if so
     // Returns true if rebuild was triggered and completed
     bool check_and_rebuild_if_needed(std::shared_ptr<TableIndexState> state) {
-        std::string lock_path = utils::get_index_lock_path(state->bucket_name, state->index_name);
-        FileLock lock(lock_path);
-
-        if (!lock.lock_exclusive()) {
-            LOG_ERROR("INDEX_BUILDER", state->index_name, "Failed to acquire lock for state check");
-            return false;
-        }
-        LOG_INFO("INDEX_LOCK", state->index_name, "Lock acquired for rebuild check (pid=" + std::to_string(getpid()) + ")");
-
-        // Reload state from disk (another process may have updated it)
-        reload_state_from_disk(state);
-
-        // Check for crashed builder and reset if needed
-        state->reset_crashed_builder();
-
-        // Check if rebuild is needed
-        if (!state->needs_rebuild()) {
-            LOG_INFO("INDEX_LOCK", state->index_name, "Lock released - no rebuild needed (pid=" + std::to_string(getpid()) + ")");
+        // Query live index stats from LanceDB
+        LanceDBIndexStats stats;
+        if (!LanceDBHelper::get_index_stats_for(state->bucket_name, state->index_name, stats)) {
             return false;
         }
 
-        // Check if another process is already building
-        if (state->index_build_in_progress && state->is_builder_alive()) {
-            LOG_INFO("INDEX_BUILDER", state->index_name,
-                     "Build already in progress by PID " + std::to_string(state->builder_pid));
-            LOG_INFO("INDEX_LOCK", state->index_name, "Lock released - build in progress (pid=" + std::to_string(getpid()) + ")");
-            return false;
+        // Check thresholds against live stats
+        bool needs = false;
+        if (stats.num_unindexed_rows >= state->unindexed_threshold) {
+            needs = true;
         }
 
-        // Mark as building and save state
-        state->mark_build_started();
-        TableStateManager::instance().save_state(state);
+        if (!needs) return false;
 
-        LOG_INFO("BUILD_INDEX", state->index_name,
-                 "Starting index build (type=" + state->config.index_type +
-                 ", insertions=" + std::to_string(state->insertions_since_build) +
-                 ", deletions=" + std::to_string(state->deletions_since_build) +
-                 ", pid=" + std::to_string(getpid()) + ")");
-
-        // Release lock during the actual build (allows other PUT/DELETE to proceed)
-        LOG_INFO("INDEX_LOCK", state->index_name, "Lock released before build (pid=" + std::to_string(getpid()) + ")");
-        lock.unlock();
-
-        // Run the actual build (this can take a long time)
-        bool success = run_build(state);
-
-        // Re-acquire lock to update state after build
-        if (!lock.lock_exclusive()) {
-            LOG_ERROR("INDEX_BUILDER", state->index_name, "Failed to acquire lock after build");
-            return success;
-        }
-        LOG_INFO("INDEX_LOCK", state->index_name, "Lock acquired after build (pid=" + std::to_string(getpid()) + ")");
-
-        // Reload and update state
-        reload_state_from_disk(state);
-
-        if (success) {
-            // Get current row count and version
-            std::string db_path = utils::get_index_db_path(state->bucket_name, state->index_name);
-            LanceDBConnection* conn = LanceDBHelper::connect(db_path);
-            unsigned long long row_count = 0;
-            unsigned long long version = 0;
-
-            if (conn) {
-                LanceDBTable* table = LanceDBHelper::open_table(conn, "vectors");
-                if (table) {
-                    row_count = lancedb_table_count_rows(table);
-                    version = lancedb_table_version(table);
-                    lancedb_table_free(table);
-                }
-                lancedb_connection_free(conn);
-            }
-
-            state->on_index_build_complete(row_count, version);
-            LOG_INFO("BUILD_INDEX", state->index_name,
-                     "Index build complete (rows=" + std::to_string(row_count) +
-                     ", version=" + std::to_string(version) + ")");
-        } else {
-            // Build failed - reset in_progress flag but keep counters
-            state->index_build_in_progress = false;
-            state->builder_pid = 0;
-        }
-
-        TableStateManager::instance().save_state(state);
-        LOG_INFO("INDEX_LOCK", state->index_name, "Lock released after state update (pid=" + std::to_string(getpid()) + ")");
-        return success;
+        return do_rebuild(state, stats, false);
     }
 
     // Force trigger rebuild (for manual trigger)
     bool force_rebuild(std::shared_ptr<TableIndexState> state) {
+        LanceDBIndexStats stats;
+        LanceDBHelper::get_index_stats_for(state->bucket_name, state->index_name, stats);
+        return do_rebuild(state, stats, true);
+    }
+
+private:
+    bool do_rebuild(std::shared_ptr<TableIndexState> state,
+                    const LanceDBIndexStats& stats, bool forced) {
         std::string lock_path = utils::get_index_lock_path(state->bucket_name, state->index_name);
-        FileLock lock(lock_path);
+        FrontendLocker lock(lock_path);
 
         if (!lock.lock_exclusive()) {
-            LOG_ERROR("INDEX_BUILDER", state->index_name, "Failed to acquire lock for manual rebuild");
+            LOG_ERROR("INDEX_BUILDER", state->index_name, "Failed to acquire lock for rebuild");
             return false;
         }
-        LOG_INFO("INDEX_LOCK", state->index_name, "Lock acquired for manual rebuild (pid=" + std::to_string(getpid()) + ")");
+        LOG_INFO("INDEX_LOCK", state->index_name, "Lock acquired for rebuild check (pid=" + std::to_string(getpid()) + ")");
 
-        // Reload state from disk
+        // Reload build-coordination state from disk
         reload_state_from_disk(state);
-
-        // Check for crashed builder
         state->reset_crashed_builder();
 
         // Check if another process is already building
         if (state->index_build_in_progress && state->is_builder_alive()) {
             LOG_INFO("INDEX_BUILDER", state->index_name,
                      "Build already in progress by PID " + std::to_string(state->builder_pid));
-            LOG_INFO("INDEX_LOCK", state->index_name, "Lock released - manual build skipped (pid=" + std::to_string(getpid()) + ")");
             return false;
         }
 
-        // Mark as building
+        // Mark as building and save
         state->mark_build_started();
         TableStateManager::instance().save_state(state);
 
+        std::string reason = forced ? "manual" : "threshold";
         LOG_INFO("BUILD_INDEX", state->index_name,
-                 "Starting manual index build (pid=" + std::to_string(getpid()) + ")");
+                 "Starting index build (" + reason + ", type=" + state->config.index_type +
+                 ", unindexed=" + std::to_string(stats.num_unindexed_rows) +
+                 ", indexed=" + std::to_string(stats.num_indexed_rows) +
+                 ", pid=" + std::to_string(getpid()) + ")");
 
-        // Release lock during build
-        LOG_INFO("INDEX_LOCK", state->index_name, "Lock released before manual build (pid=" + std::to_string(getpid()) + ")");
+        // Release lock during the actual build
         lock.unlock();
 
-        // Run build
         bool success = run_build(state);
 
-        // Re-acquire lock for state update
+        // Re-acquire lock to update build-coordination state
         if (!lock.lock_exclusive()) {
-            LOG_ERROR("INDEX_BUILDER", state->index_name, "Failed to acquire lock after manual build");
+            LOG_ERROR("INDEX_BUILDER", state->index_name, "Failed to acquire lock after build");
             return success;
         }
-        LOG_INFO("INDEX_LOCK", state->index_name, "Lock acquired after manual build (pid=" + std::to_string(getpid()) + ")");
 
         reload_state_from_disk(state);
 
         if (success) {
-            std::string db_path = utils::get_index_db_path(state->bucket_name, state->index_name);
-            LanceDBConnection* conn = LanceDBHelper::connect(db_path);
-            unsigned long long row_count = 0;
-            unsigned long long version = 0;
-
-            if (conn) {
-                LanceDBTable* table = LanceDBHelper::open_table(conn, "vectors");
-                if (table) {
-                    row_count = lancedb_table_count_rows(table);
-                    version = lancedb_table_version(table);
-                    lancedb_table_free(table);
-                }
-                lancedb_connection_free(conn);
+            state->mark_build_complete();
+            // Log post-build stats from LanceDB
+            LanceDBIndexStats post_stats;
+            if (LanceDBHelper::get_index_stats_for(state->bucket_name, state->index_name, post_stats)) {
+                LOG_INFO("BUILD_INDEX", state->index_name,
+                         "Index build complete (indexed=" + std::to_string(post_stats.num_indexed_rows) +
+                         ", unindexed=" + std::to_string(post_stats.num_unindexed_rows) + ")");
             }
-
-            state->on_index_build_complete(row_count, version);
-            LOG_INFO("BUILD_INDEX", state->index_name,
-                     "Manual index build complete (rows=" + std::to_string(row_count) +
-                     ", version=" + std::to_string(version) + ")");
         } else {
-            state->index_build_in_progress = false;
-            state->builder_pid = 0;
+            state->mark_build_complete();
+            LOG_ERROR("BUILD_INDEX", state->index_name, "Index build failed");
         }
 
         TableStateManager::instance().save_state(state);
-        LOG_INFO("INDEX_LOCK", state->index_name, "Lock released after manual build state update (pid=" + std::to_string(getpid()) + ")");
         return success;
     }
 
-    // Update state counters with file locking (called after PUT/DELETE)
-    void update_state_with_lock(std::shared_ptr<TableIndexState> state,
-                                 size_t insertions, size_t deletions) {
-	    // NOTE: upon using the index-statistics extracted from lancedb engine, this function is obselete.
-        std::string lock_path = utils::get_index_lock_path(state->bucket_name, state->index_name);
-        FileLock lock(lock_path);
-
-        if (!lock.lock_exclusive()) {
-            LOG_ERROR("INDEX_BUILDER", state->index_name, "Failed to acquire lock for state update");
-            return;
-        }
-        LOG_INFO("INDEX_LOCK", state->index_name, "Lock acquired for state update (pid=" + std::to_string(getpid()) + ")");
-
-        // Reload current state from disk (may have been updated by another process)
-        reload_state_from_disk(state);
-
-        // Check for crashed builder
-        state->reset_crashed_builder();
-
-        // Update counters
-        if (insertions > 0) {
-            state->record_insertions(insertions);
-        }
-        if (deletions > 0) {
-            state->record_deletions(deletions);
-        }
-
-        // Save updated state
-        TableStateManager::instance().save_state(state);
-        LOG_INFO("INDEX_LOCK", state->index_name, "Lock released after state update (pid=" + std::to_string(getpid()) + ")");
-    }
-
-private:
-    //NOTE: the index state can be retrieved from the lancedb engine, on later versions the index state will be persisted in the lancedb metadata, and this function can be removed
     void reload_state_from_disk(std::shared_ptr<TableIndexState> state) {
         std::string state_path = utils::get_index_state_path(state->bucket_name, state->index_name);
         std::string state_str = utils::read_file(state_path);
-
         if (!state_str.empty()) {
             try {
                 json j = json::parse(state_str);
                 state->load_from_json(j);
-            } catch (...) {
-                // Ignore parse errors
-            }
+            } catch (...) {}
         }
     }
 
@@ -1349,7 +1281,6 @@ private:
             return false;
         }
 
-        // Configure vector index
         LanceDBVectorIndexConfig vec_config;
         vec_config.num_partitions = state->config.num_partitions;
         vec_config.num_sub_vectors = state->config.num_sub_vectors;
@@ -1358,14 +1289,10 @@ private:
         vec_config.distance_type = state->config.to_lancedb_distance();
         vec_config.accelerator = state->config.accelerator.empty() ?
                                   nullptr : state->config.accelerator.c_str();
-	/// what is the impact of replace? does it always build from scratch? or it can reuse existing index data and just update the changed vectors?
-        vec_config.replace = 1;  // Always replace existing index
+        vec_config.replace = 1;
 
-        // Create the vector index
         const char* columns[] = {"data"};
         char* err_msg = nullptr;
-
-	// 
         LanceDBError result = lancedb_table_create_vector_index(
             table, columns, 1, state->config.to_lancedb_type(), &vec_config, &err_msg);
 
@@ -1670,28 +1597,23 @@ ApiResponse PutVectors(const json& request) {
         LOG_OP("PUT_VECTOR", index_name, key, "Vector inserted");
     }
 
-    //TODO : upon rebuild is triggered, the ack should be sent immediately without waiting for the build to complete. The build can be done asynchronously and the client can be notified of completion via a callback or by checking the index state in subsequent requests.
-    // to check the option to fork and run the build in a child process, allowing the parent process to return the response immediately while the child process handles the index building. This would involve some inter-process communication to update the index state once the build is complete.
- 
-    // Update state with file locking (record insertions)
-    IndexBuilder::instance().update_state_with_lock(state, keys.size(), 0);
-
-    // Check if rebuild is needed and trigger if so (synchronous, with locking)
+    // Check if rebuild is needed (queries live index stats from LanceDB)
     bool rebuild_triggered = IndexBuilder::instance().check_and_rebuild_if_needed(state);
     if (rebuild_triggered) {
         LOG_INFO("PUT_VECTOR", index_name, "Index rebuild completed (threshold reached)");
     }
 
-    // Reload state to get latest values
-    auto updated_state = TableStateManager::instance().get_or_create(bucket_name, index_name);
+    // Get live stats for response
+    LanceDBIndexStats stats;
+    LanceDBHelper::get_index_stats_for(bucket_name, index_name, stats);
 
     return make_success({
         {"inserted", keys.size()},
         {"rebuildTriggered", rebuild_triggered},
         {"indexState", {
-            {"insertionsSinceBuild", updated_state->insertions_since_build},
-            {"deletionsSinceBuild", updated_state->deletions_since_build},
-            {"indexBuildInProgress", updated_state->index_build_in_progress}
+            {"numIndexedRows", stats.num_indexed_rows},
+            {"numUnindexedRows", stats.num_unindexed_rows},
+            {"indexBuildInProgress", state->index_build_in_progress}
         }}
     });
 }
@@ -1757,26 +1679,23 @@ ApiResponse DeleteVectors(const json& request) {
         LOG_OP("DELETE_VECTOR", index_name, key, "Vector deleted");
     }
 
-    // Update state with file locking (record deletions)
+    // Check if rebuild is needed (queries live index stats from LanceDB)
     auto state = TableStateManager::instance().get_or_create(bucket_name, index_name);
-    IndexBuilder::instance().update_state_with_lock(state, 0, keys.size());
-
-    // Check if rebuild is needed and trigger if so (synchronous, with locking)
     bool rebuild_triggered = IndexBuilder::instance().check_and_rebuild_if_needed(state);
     if (rebuild_triggered) {
         LOG_INFO("DELETE_VECTOR", index_name, "Index rebuild completed (deletion ratio threshold reached)");
     }
 
-    // Reload state to get latest values
-    auto updated_state = TableStateManager::instance().get_or_create(bucket_name, index_name);
+    LanceDBIndexStats stats;
+    LanceDBHelper::get_index_stats_for(bucket_name, index_name, stats);
 
     return make_success({
         {"deleted", keys.size()},
         {"rebuildTriggered", rebuild_triggered},
         {"indexState", {
-            {"insertionsSinceBuild", updated_state->insertions_since_build},
-            {"deletionsSinceBuild", updated_state->deletions_since_build},
-            {"indexBuildInProgress", updated_state->index_build_in_progress}
+            {"numIndexedRows", stats.num_indexed_rows},
+            {"numUnindexedRows", stats.num_unindexed_rows},
+            {"indexBuildInProgress", state->index_build_in_progress}
         }}
     });
 }
@@ -1902,8 +1821,6 @@ ApiResponse QueryVectors(const json& request) {
         {"indexType", config.index_type},
         {"vectors", vectors_response},
         {"indexState", {
-            {"insertionsSinceBuild", state->insertions_since_build},
-            {"deletionsSinceBuild", state->deletions_since_build},
             {"indexBuildInProgress", state->index_build_in_progress}
         }}
     });
@@ -1971,7 +1888,7 @@ ApiResponse GetIndexState(const json& request) {
 
     auto state = TableStateManager::instance().get_or_create(bucket_name, index_name);
 
-    // Get current table stats
+    // Get live stats from LanceDB engine
     LanceDBConnection* conn = LanceDBHelper::connect(db_path);
     if (conn) {
         LanceDBTable* table = LanceDBHelper::open_table(conn, "vectors");
@@ -1979,10 +1896,18 @@ ApiResponse GetIndexState(const json& request) {
             unsigned long long current_rows = lancedb_table_count_rows(table);
             unsigned long long current_version = lancedb_table_version(table);
 
+            LanceDBIndexStats stats;
+            LanceDBHelper::get_index_stats(table, stats);
+
+            bool needs_rebuild = (stats.num_unindexed_rows >= state->unindexed_threshold);
+
             json response = state->to_json();
             response["currentRows"] = current_rows;
             response["currentVersion"] = current_version;
-            response["needsRebuild"] = state->needs_rebuild();
+            response["numIndexedRows"] = stats.num_indexed_rows;
+            response["numUnindexedRows"] = stats.num_unindexed_rows;
+            response["numIndices"] = stats.num_indices;
+            response["needsRebuild"] = needs_rebuild;
 
             lancedb_table_free(table);
             lancedb_connection_free(conn);

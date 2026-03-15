@@ -210,7 +210,8 @@ import json, sys
 s = json.load(sys.stdin)
 print(f'  Rows:                {s.get(\"currentRows\", 0)}')
 print(f'  Version:             {s.get(\"currentVersion\", 0)}')
-print(f'  Insertions since:    {s.get(\"insertionsSinceBuild\", 0)}')
+print(f'  Indexed rows:        {s.get(\"numIndexedRows\", \"n/a\")}')
+print(f'  Unindexed rows:      {s.get(\"numUnindexedRows\", \"n/a\")}')
 print(f'  Rebuild threshold:   {s.get(\"unindexedThreshold\", 0)}')
 print(f'  Build in progress:   {s.get(\"indexBuildInProgress\", False)}')
 " 2>/dev/null
@@ -271,9 +272,11 @@ import json, sys
 s = json.load(sys.stdin)
 print(f'  Rows:                {s.get(\"currentRows\", 0)}')
 print(f'  Version:             {s.get(\"currentVersion\", 0)}')
-print(f'  Rows at last build:  {s.get(\"rowsAtLastBuild\", 0)}')
-print(f'  Insertions since:    {s.get(\"insertionsSinceBuild\", 0)}')
+print(f'  Indexed rows:        {s.get(\"numIndexedRows\", \"n/a\")}')
+print(f'  Unindexed rows:      {s.get(\"numUnindexedRows\", \"n/a\")}')
+print(f'  Num indices:         {s.get(\"numIndices\", 0)}')
 print(f'  Build in progress:   {s.get(\"indexBuildInProgress\", False)}')
+print(f'  Needs rebuild:       {s.get(\"needsRebuild\", False)}')
 " 2>/dev/null
 
 # ============================================================================
