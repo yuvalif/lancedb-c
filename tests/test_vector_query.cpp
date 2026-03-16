@@ -20,6 +20,19 @@ static std::vector<float> generate_random_query_vector(size_t dimensions) {
   return query_vector;
 }
 
+// Helper function to generate deterministic query vector for a fixed seed
+static std::vector<float> generate_random_query_vector(size_t dimensions, uint32_t seed) {
+  std::vector<float> query_vector(dimensions);
+  std::mt19937 gen(seed);
+  std::uniform_real_distribution<float> dis(0.0f, 10.0f);
+
+  for (size_t i = 0; i < dimensions; i++) {
+    query_vector[i] = dis(gen);
+  }
+
+  return query_vector;
+}
+
 TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - nearest_to without index", "[vector_query]") {
   const std::string table_name = "vector_query_test";
   constexpr size_t total_rows = 100;
@@ -811,3 +824,66 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - error cases", "[vector_
   lancedb_table_free(table);
 }
 
+TEST_CASE_METHOD(LanceDBSessionFixture, "LanceDB Vector Query - repeated queries populate session cache stats", "[vector_query][session]") {
+  LanceDBSessionCacheStats initial_index_stats{};
+  LanceDBSessionCacheStats final_index_stats{};
+  char* error_message = nullptr;
+
+  LanceDBError result = lancedb_session_index_cache_stats(session, &initial_index_stats, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+
+  const std::string table_name = "vector_query_session_cache_stats_test";
+  constexpr size_t total_rows = 256;
+  LanceDBTable* table = create_table_with_data(table_name, total_rows, 0);
+  REQUIRE(table != nullptr);
+
+  const char* vector_columns[] = {"data"};
+  LanceDBVectorIndexConfig config = {
+    .num_partitions = 4,
+    .num_sub_vectors = -1,
+    .max_iterations = -1,
+    .sample_rate = 0.0f,
+    .distance_type = LANCEDB_DISTANCE_L2,
+    .accelerator = nullptr,
+    .replace = 0
+  };
+
+  result = lancedb_table_create_vector_index(
+      table, vector_columns, 1, LANCEDB_INDEX_IVF_FLAT, &config, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+
+  
+  constexpr size_t repeat_count = 20;
+  constexpr size_t limit = 10;
+  for (size_t i = 0; i < repeat_count; i++) {
+    uint32_t query_seed = static_cast<uint32_t>(i);
+    std::vector<float> query_vector = generate_random_query_vector(TEST_SCHEMA_DIMENSIONS, query_seed);
+    LanceDBVectorQuery* query = lancedb_vector_query_new(
+        table,
+        query_vector.data(),
+        TEST_SCHEMA_DIMENSIONS);
+    REQUIRE(query != nullptr);
+
+    result = lancedb_vector_query_limit(query, limit, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+
+    LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
+    REQUIRE(query_result != nullptr);
+    lancedb_query_result_free(query_result);
+  }
+
+  result = lancedb_session_index_cache_stats(session, &final_index_stats, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+
+  REQUIRE(final_index_stats.hits > initial_index_stats.hits);
+  REQUIRE(final_index_stats.misses > initial_index_stats.misses);
+  REQUIRE(final_index_stats.num_entries > initial_index_stats.num_entries);
+  REQUIRE(final_index_stats.size_bytes > initial_index_stats.size_bytes);
+  REQUIRE(final_index_stats.hits > final_index_stats.misses);
+
+  lancedb_table_free(table);
+}
