@@ -46,6 +46,31 @@ pub struct LanceDBTableNamesBuilder {
     inner: Box<TableNamesBuilder>,
 }
 
+/// Opaque handle to a Session
+#[repr(C)]
+pub struct LanceDBSession {
+    inner: Arc<lancedb::Session>,
+}
+
+/// Session creation options
+#[repr(C)]
+pub struct LanceDBSessionOptions {
+    pub index_cache_bytes: usize,
+    pub metadata_cache_bytes: usize,
+}
+
+/// Cache statistics for a session cache
+#[repr(C)]
+pub struct LanceDBSessionCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub num_entries: usize,
+    pub size_bytes: usize,
+}
+
+const DEFAULT_INDEX_CACHE_SIZE_BYTES: usize = 6 * 1024 * 1024 * 1024;
+const DEFAULT_METADATA_CACHE_SIZE_BYTES: usize = 1024 * 1024 * 1024;
+
 /// Runtime to handle async operations
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
@@ -157,6 +182,42 @@ pub unsafe extern "C" fn lancedb_connect_builder_storage_option(
     Box::into_raw(boxed_builder)
 }
 
+/// Set a session for the connection builder
+///
+/// # Safety
+/// - `builder` must be a valid pointer returned from `lancedb_connect`
+/// - `builder` will be consumed and must not be used after calling this function
+/// - `session` can be NULL (no-op) or a valid pointer returned from `lancedb_session_new`
+///
+/// # Returns
+/// - A new pointer to LanceDBConnectBuilder on success
+/// - Null pointer on failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_connect_builder_session(
+    builder: *mut LanceDBConnectBuilder,
+    session: *const LanceDBSession,
+) -> *mut LanceDBConnectBuilder {
+    if builder.is_null() {
+        return ptr::null_mut();
+    }
+
+    let builder_box = Box::from_raw(builder);
+    let connect_builder = *builder_box.inner;
+
+    let updated_builder = if session.is_null() {
+        connect_builder
+    } else {
+        let session_ref = &*session;
+        connect_builder.session(session_ref.inner.clone())
+    };
+
+    let boxed_builder = Box::new(LanceDBConnectBuilder {
+        inner: Box::new(updated_builder),
+    });
+
+    Box::into_raw(boxed_builder)
+}
+
 /// Free a ConnectBuilder
 ///
 /// # Safety
@@ -197,6 +258,116 @@ pub unsafe extern "C" fn lancedb_connection_uri(
     });
 
     cached_uri.as_ptr()
+}
+
+/// Create a new session
+///
+/// # Safety
+/// - `options` can be NULL to use default session configuration
+///
+/// # Returns
+/// - Non-null pointer to LanceDBSession on success
+/// - Null pointer on failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_session_new(
+    options: *const LanceDBSessionOptions,
+) -> *mut LanceDBSession {
+    let session = if options.is_null() {
+        Arc::new(lancedb::Session::default())
+    } else {
+        let session_options = &*options;
+        let index_cache_bytes = if session_options.index_cache_bytes == 0 {
+            DEFAULT_INDEX_CACHE_SIZE_BYTES
+        } else {
+            session_options.index_cache_bytes
+        };
+        let metadata_cache_bytes = if session_options.metadata_cache_bytes == 0 {
+            DEFAULT_METADATA_CACHE_SIZE_BYTES
+        } else {
+            session_options.metadata_cache_bytes
+        };
+        Arc::new(lancedb::Session::new(
+            index_cache_bytes,
+            metadata_cache_bytes,
+            Arc::new(lancedb::ObjectStoreRegistry::default()),
+        ))
+    };
+
+    Box::into_raw(Box::new(LanceDBSession { inner: session }))
+}
+
+/// Get index cache stats for a session
+///
+/// # Safety
+/// - `session` must be a valid pointer returned from `lancedb_session_new`
+/// - `out_stats` must be a valid pointer to receive cache stats
+/// - `error_message` can be NULL to ignore detailed error messages
+///
+/// # Returns
+/// - Error code indicating success or failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_session_index_cache_stats(
+    session: *const LanceDBSession,
+    out_stats: *mut LanceDBSessionCacheStats,
+    error_message: *mut *mut c_char,
+) -> LanceDBError {
+    if session.is_null() || out_stats.is_null() {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    }
+
+    let session_ref = &*session;
+    let stats = get_runtime().block_on(session_ref.inner.index_cache_stats());
+    *out_stats = LanceDBSessionCacheStats {
+        hits: stats.hits,
+        misses: stats.misses,
+        num_entries: stats.num_entries,
+        size_bytes: stats.size_bytes,
+    };
+    LanceDBError::Success
+}
+
+/// Get metadata cache stats for a session
+///
+/// # Safety
+/// - `session` must be a valid pointer returned from `lancedb_session_new`
+/// - `out_stats` must be a valid pointer to receive cache stats
+/// - `error_message` can be NULL to ignore detailed error messages
+///
+/// # Returns
+/// - Error code indicating success or failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_session_metadata_cache_stats(
+    session: *const LanceDBSession,
+    out_stats: *mut LanceDBSessionCacheStats,
+    error_message: *mut *mut c_char,
+) -> LanceDBError {
+    if session.is_null() || out_stats.is_null() {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    }
+
+    let session_ref = &*session;
+    let stats = get_runtime().block_on(session_ref.inner.metadata_cache_stats());
+    *out_stats = LanceDBSessionCacheStats {
+        hits: stats.hits,
+        misses: stats.misses,
+        num_entries: stats.num_entries,
+        size_bytes: stats.size_bytes,
+    };
+    LanceDBError::Success
+}
+
+/// Free a Session
+///
+/// # Safety
+/// - `session` must be a valid pointer returned from `lancedb_session_new`
+/// - `session` must not be used after calling this function
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_session_free(session: *mut LanceDBSession) {
+    if !session.is_null() {
+        let _ = Box::from_raw(session);
+    }
 }
 
 /// Create a new table with Arrow schema and data

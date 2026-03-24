@@ -38,6 +38,23 @@ This example shows how to create a LanceDB table with vector data using Apache A
    LanceDBConnectBuilder* builder = lancedb_connect("./my_database");
    LanceDBConnection* db = lancedb_connect_builder_execute(builder);
 
+.. note::
+
+   You can optionally configure session cache sizes and attach the session to
+   the connection builder:
+
+   .. code-block:: c
+
+      LanceDBSessionOptions options = {0};
+      options.index_cache_bytes = 512 * 1024 * 1024;
+      options.metadata_cache_bytes = 256 * 1024 * 1024;
+
+      LanceDBSession* session = lancedb_session_new(&options);
+
+      LanceDBConnectBuilder* builder = lancedb_connect("./my_database");
+      builder = lancedb_connect_builder_session(builder, session);
+      LanceDBConnection* db = lancedb_connect_builder_execute(builder);
+
 **2. Create Arrow schema (using Arrow C++ API):**
 
 .. code-block:: cpp

@@ -658,3 +658,48 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Create Reader", "[table]") {
     }
   }
 }
+TEST_CASE_METHOD(LanceDBSessionFixture, "LanceDB Table CRUD with same session across multiple tables", "[table][session]") {
+  const char* _namespace = nullptr;
+  const std::string table_a_name = "session_table_a";
+  const std::string table_b_name = "session_table_b";
+  constexpr auto table_a_rows = 10;
+  constexpr auto table_b_rows = 15;
+
+  // Create
+  LanceDBTable* table_a = create_table_with_data(table_a_name, table_a_rows, 0);
+  LanceDBTable* table_b = create_table_with_data(table_b_name, table_b_rows, 0);
+  REQUIRE(table_a != nullptr);
+  REQUIRE(table_b != nullptr);
+
+  // Read after create
+  REQUIRE(lancedb_table_count_rows(table_a) == table_a_rows);
+  REQUIRE(lancedb_table_count_rows(table_b) == table_b_rows);
+
+  // Reopen and read again
+  lancedb_table_free(table_a);
+  lancedb_table_free(table_b);
+  table_a = lancedb_connection_open_table(db, table_a_name.c_str());
+  table_b = lancedb_connection_open_table(db, table_b_name.c_str());
+  REQUIRE(table_a != nullptr);
+  REQUIRE(table_b != nullptr);
+  REQUIRE(lancedb_table_count_rows(table_a) == table_a_rows);
+  REQUIRE(lancedb_table_count_rows(table_b) == table_b_rows);
+
+  // Delete
+  lancedb_table_free(table_a);
+  lancedb_table_free(table_b);
+  char* error_message = nullptr;
+  LanceDBError result = lancedb_connection_drop_table(db, table_a_name.c_str(), _namespace, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+
+  result = lancedb_connection_drop_table(db, table_b_name.c_str(), _namespace, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+
+  // Verify delete
+  table_a = lancedb_connection_open_table(db, table_a_name.c_str());
+  table_b = lancedb_connection_open_table(db, table_b_name.c_str());
+  REQUIRE(table_a == nullptr);
+  REQUIRE(table_b == nullptr);
+}

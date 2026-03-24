@@ -282,3 +282,56 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Where Filter no Index", "[quer
   lancedb_table_free(table);
 }
 
+TEST_CASE_METHOD(LanceDBSessionFixture, "LanceDB Query - repeated queries populate session cache stats", "[query][session]") {
+
+  LanceDBSessionCacheStats initial_index_stats{};
+  LanceDBSessionCacheStats final_index_stats{};
+
+  char* error_message = nullptr;
+  LanceDBError result = lancedb_session_index_cache_stats(session, &initial_index_stats, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+
+  REQUIRE(initial_index_stats.hits == 0);
+  REQUIRE(initial_index_stats.misses == 0);
+  REQUIRE(initial_index_stats.num_entries == 0);
+  REQUIRE(initial_index_stats.size_bytes == 0);
+
+  const std::string table_name = "query_session_cache_stats_test";
+  constexpr size_t total_rows = 100;
+  LanceDBTable* table = create_table_with_data(table_name, total_rows, 0);
+  REQUIRE(table != nullptr);
+  create_key_index(table);
+
+  constexpr size_t repeat_count = 20;
+  const char* columns[] = {"key", "data"};
+  for (size_t i = 0; i < repeat_count; i++) {
+    LanceDBQuery* query = lancedb_query_new(table);
+    REQUIRE(query != nullptr);
+
+    const std::string filter = "key = \"key_" + std::to_string(i % total_rows) + "\"";
+    result = lancedb_query_where_filter(query, filter.c_str(), &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+
+    result = lancedb_query_select(query, columns, 2, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+
+    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    REQUIRE(query_result != nullptr);
+    lancedb_query_result_free(query_result);
+  }
+
+  result = lancedb_session_index_cache_stats(session, &final_index_stats, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+
+  REQUIRE(final_index_stats.hits > initial_index_stats.hits);
+  REQUIRE(final_index_stats.misses > initial_index_stats.misses);
+  REQUIRE(final_index_stats.num_entries > initial_index_stats.num_entries);
+  REQUIRE(final_index_stats.size_bytes > initial_index_stats.size_bytes);
+  REQUIRE(final_index_stats.hits > final_index_stats.misses);
+  
+  lancedb_table_free(table);
+}

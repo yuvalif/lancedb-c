@@ -73,6 +73,27 @@ public:
   LanceDBTable* create_table_with_data(const std::string& table_name, int num_rows, int start_index);
 };
 
+class LanceDBSessionFixture : public LanceDBFixture {
+  protected: 
+    LanceDBSession* session = nullptr;
+    LanceDBSessionOptions session_options = {.index_cache_bytes = 1024 * 1024, .metadata_cache_bytes = 512 * 1024};
+  public:
+    LanceDBSessionFixture() {
+      lancedb_connection_free(db);
+      LanceDBConnectBuilder* builder = lancedb_connect(uri.c_str());
+      REQUIRE(builder != nullptr);
+      session = lancedb_session_new(&session_options);
+      REQUIRE(session != nullptr);
+      builder = lancedb_connect_builder_session(builder, session);
+      db = lancedb_connect_builder_execute(builder);
+      REQUIRE(db != nullptr);
+    }
+
+    ~LanceDBSessionFixture() {
+      lancedb_session_free(session);
+    }
+};
+
 // Test schema dimensions constant
 constexpr size_t TEST_SCHEMA_DIMENSIONS = 8;
 
