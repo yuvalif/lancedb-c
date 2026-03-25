@@ -824,6 +824,40 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - error cases", "[vector_
   lancedb_table_free(table);
 }
 
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - Filter on non-existent column", "[vector_query]") {
+  const std::string table_name = "vector_query_filter_nonexistent_column_test";
+
+  // Create table with data (columns: "key" and "data")
+  LanceDBTable* table = create_table_with_data(table_name, 10, 0);
+  REQUIRE(table != nullptr);
+
+  // Create vector query
+  std::vector<float> query_vector = generate_random_query_vector(TEST_SCHEMA_DIMENSIONS);
+  LanceDBVectorQuery* query = lancedb_vector_query_new(
+      table,
+      query_vector.data(),
+      TEST_SCHEMA_DIMENSIONS
+  );
+  REQUIRE(query != nullptr);
+
+  // Set limit
+  char* error_message = nullptr;
+  LanceDBError result = lancedb_vector_query_limit(query, 5, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+
+  // Filter on a column that does not exist in the table
+  error_message = nullptr;
+  result = lancedb_vector_query_where_filter(query, "key = \"key_42\" OR unknown = \"value\"", &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+  // error should be caught at execution time
+  LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
+  REQUIRE(query_result == nullptr);
+
+  lancedb_table_free(table);
+}
+
 TEST_CASE_METHOD(LanceDBSessionFixture, "LanceDB Vector Query - repeated queries populate session cache stats", "[vector_query][session]") {
   LanceDBSessionCacheStats initial_index_stats{};
   LanceDBSessionCacheStats final_index_stats{};
