@@ -540,6 +540,116 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Merge Insert", "[table]") {
   lancedb_table_free(table);
 }
 
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB Table Delete", "[table]") {
+  const std::string table_name = "test_delete_table";
+  create_empty_table(table_name);
+
+  LanceDBTable* table = lancedb_connection_open_table(db, table_name.c_str());
+  REQUIRE(table != nullptr);
+
+  // Add initial data (keys key_0 through key_9)
+  constexpr auto row_num = 20;
+  auto initial_batch = create_test_record_batch(row_num, 0);
+  auto initial_reader = create_reader_from_batch(initial_batch);
+  REQUIRE(initial_reader != nullptr);
+
+  char* error_message = nullptr;
+  LanceDBError result = lancedb_table_add(table, initial_reader, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+  REQUIRE(lancedb_table_count_rows(table) == row_num);
+
+  SECTION("Delete row matching predicate") {
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_delete(table, "key = 'key_0'", &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(lancedb_table_count_rows(table) == row_num - 1);
+  }
+
+  SECTION("Delete multiple rows matching predicate") {
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_delete(
+        table, "key IN ('key_0', 'key_1', 'key_2')", &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(lancedb_table_count_rows(table) == row_num - 3);
+
+    result = lancedb_table_delete(
+        table, "key = 'key_10' OR key = 'key_11' OR key = 'key_12')", &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(lancedb_table_count_rows(table) == row_num - 6);
+  }
+
+  SECTION("Delete with predicate matching no rows") {
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_delete(
+        table, "key = 'nonexistent'", &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(lancedb_table_count_rows(table) == row_num);
+  }
+
+  SECTION("Delete all rows") {
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_delete(
+        table, "key IS NOT NULL", &error_message);
+
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+    REQUIRE(lancedb_table_count_rows(table) == 0);
+  }
+
+  SECTION("Delete with unknown column should fail") {
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_delete(
+        table, "unknown = 'key_0'", &error_message);
+
+    REQUIRE(result != LANCEDB_SUCCESS);
+    REQUIRE(result != LANCEDB_SUCCESS);
+    REQUIRE(error_message != nullptr);
+    lancedb_free_string(error_message);
+  }
+
+  SECTION("Delete with empty predicate should fail") {
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_delete(
+        table, "", &error_message);
+
+    REQUIRE(result != LANCEDB_SUCCESS);
+    REQUIRE(result != LANCEDB_SUCCESS);
+    REQUIRE(error_message != nullptr);
+    lancedb_free_string(error_message);
+  }
+
+  SECTION("Delete with null table should fail") {
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_delete(
+        nullptr, "key = 'key_0'", &error_message);
+
+    REQUIRE(result != LANCEDB_SUCCESS);
+    REQUIRE(error_message != nullptr);
+    lancedb_free_string(error_message);
+  }
+
+  SECTION("Delete with null predicate should fail") {
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_delete(
+        table, nullptr, &error_message);
+
+    REQUIRE(result != LANCEDB_SUCCESS);
+    REQUIRE(error_message != nullptr);
+    lancedb_free_string(error_message);
+  }
+
+  lancedb_table_free(table);
+}
+
 TEST_CASE_METHOD(LanceDBFixture, "LanceDB Create Reader", "[table]") {
   constexpr auto row_num = 10;
   auto batch = create_test_record_batch(row_num, 0);
