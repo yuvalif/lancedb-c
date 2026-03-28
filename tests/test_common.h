@@ -48,6 +48,9 @@ public:
   ~BaseFixture() {
     if (directory_exists(data_dir.c_str())) {
       remove_directory(data_dir.c_str());
+    } else {
+      // Remove regular file (e.g. blocker file from connect failure test)
+      std::remove(data_dir.c_str());
     }
   }
 };

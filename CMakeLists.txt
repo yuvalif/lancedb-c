@@ -425,6 +425,16 @@ if(BUILD_TESTS)
   # Enable CTest
   enable_testing()
 
+  # Set up coverage profraw output directory
+  if(BUILD_COVERAGE)
+    set(PROFRAW_DIR "${CMAKE_BINARY_DIR}/profraw")
+    file(REMOVE_RECURSE ${PROFRAW_DIR})
+    file(MAKE_DIRECTORY ${PROFRAW_DIR})
+    set(TEST_ENV_PREFIX ${CMAKE_COMMAND} -E env "LLVM_PROFILE_FILE=${PROFRAW_DIR}/%p_%m.profraw")
+  else()
+    set(TEST_ENV_PREFIX)
+  endif()
+
   # Check if valgrind is available
   find_program(VALGRIND_EXECUTABLE valgrind)
   if(VALGRIND_EXECUTABLE)
@@ -432,7 +442,7 @@ if(BUILD_TESTS)
     # Run connection tests with valgrind
     # Only fail on definite leaks, not "possibly lost" from Rust runtime
     add_test(NAME lancedb_connection_tests
-      COMMAND ${VALGRIND_EXECUTABLE}
+      COMMAND ${TEST_ENV_PREFIX} ${VALGRIND_EXECUTABLE}
         --tool=memcheck
         --leak-check=full
         --show-leak-kinds=definite
@@ -445,7 +455,7 @@ if(BUILD_TESTS)
     )
     # Run table tests with valgrind
     add_test(NAME lancedb_table_tests
-      COMMAND ${VALGRIND_EXECUTABLE}
+      COMMAND ${TEST_ENV_PREFIX} ${VALGRIND_EXECUTABLE}
         --tool=memcheck
         --leak-check=full
         --show-leak-kinds=definite
@@ -458,7 +468,7 @@ if(BUILD_TESTS)
     )
     # Run table metadata/version tests with valgrind
     add_test(NAME lancedb_table_meta_tests
-      COMMAND ${VALGRIND_EXECUTABLE}
+      COMMAND ${TEST_ENV_PREFIX} ${VALGRIND_EXECUTABLE}
         --tool=memcheck
         --leak-check=full
         --show-leak-kinds=definite
@@ -471,7 +481,7 @@ if(BUILD_TESTS)
     )
     # Run scalar index tests with valgrind
     add_test(NAME lancedb_index_tests
-      COMMAND ${VALGRIND_EXECUTABLE}
+      COMMAND ${TEST_ENV_PREFIX} ${VALGRIND_EXECUTABLE}
         --tool=memcheck
         --leak-check=full
         --show-leak-kinds=definite
@@ -484,7 +494,7 @@ if(BUILD_TESTS)
     )
     # Run query tests with valgrind
     add_test(NAME lancedb_query_tests
-      COMMAND ${VALGRIND_EXECUTABLE}
+      COMMAND ${TEST_ENV_PREFIX} ${VALGRIND_EXECUTABLE}
         --tool=memcheck
         --leak-check=full
         --show-leak-kinds=definite
@@ -497,29 +507,25 @@ if(BUILD_TESTS)
     )
   else()
     message(WARNING "Valgrind not found, running tests without memory checking")
-    add_test(NAME lancedb_connection_tests COMMAND lancedb_connection_tests)
-    add_test(NAME lancedb_table_tests COMMAND lancedb_table_tests)
-    add_test(NAME lancedb_table_meta_tests COMMAND lancedb_table_meta_tests)
-    add_test(NAME lancedb_index_tests COMMAND lancedb_index_tests)
-    add_test(NAME lancedb_query_tests COMMAND lancedb_query_tests)
+    add_test(NAME lancedb_connection_tests COMMAND ${TEST_ENV_PREFIX} $<TARGET_FILE:lancedb_connection_tests>)
+    add_test(NAME lancedb_table_tests COMMAND ${TEST_ENV_PREFIX} $<TARGET_FILE:lancedb_table_tests>)
+    add_test(NAME lancedb_table_meta_tests COMMAND ${TEST_ENV_PREFIX} $<TARGET_FILE:lancedb_table_meta_tests>)
+    add_test(NAME lancedb_index_tests COMMAND ${TEST_ENV_PREFIX} $<TARGET_FILE:lancedb_index_tests>)
+    add_test(NAME lancedb_query_tests COMMAND ${TEST_ENV_PREFIX} $<TARGET_FILE:lancedb_query_tests>)
   endif()
 
   # Run vector index tests WITHOUT valgrind (too slow under valgrind)
-  add_test(NAME lancedb_vector_index_tests COMMAND lancedb_vector_index_tests)
+  add_test(NAME lancedb_vector_index_tests COMMAND ${TEST_ENV_PREFIX} $<TARGET_FILE:lancedb_vector_index_tests>)
   # Run vector query tests WITHOUT valgrind (too slow under valgrind)
-  add_test(NAME lancedb_vector_query_tests COMMAND lancedb_vector_query_tests)
+  add_test(NAME lancedb_vector_query_tests COMMAND ${TEST_ENV_PREFIX} $<TARGET_FILE:lancedb_vector_query_tests>)
 
   if(BUILD_COVERAGE)
-    set(PROFRAW_DIR "${CMAKE_BINARY_DIR}/profraw")
     set(PROFDATA_FILE "${CMAKE_BINARY_DIR}/coverage.profdata")
     set(COVERAGE_REPORT_DIR "${CMAKE_BINARY_DIR}/coverage-report")
 
     add_custom_target(coverage
-      # Clean old profiling data
-      COMMAND ${CMAKE_COMMAND} -E rm -rf ${PROFRAW_DIR}
-      COMMAND ${CMAKE_COMMAND} -E make_directory ${PROFRAW_DIR}
       # Run tests via ctest with profiling output directed to profraw dir
-      COMMAND ${CMAKE_COMMAND} -E env "LLVM_PROFILE_FILE=${PROFRAW_DIR}/test_%p_%m.profraw"
+      COMMAND ${TEST_ENV_PREFIX}
         ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR} -j
       # Merge profiling data
       COMMAND sh -c "${LLVM_PROFDATA} merge -sparse ${PROFRAW_DIR}/*.profraw -o ${PROFDATA_FILE}"
