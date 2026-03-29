@@ -122,7 +122,8 @@ endif()
 # rust-lib target
 set(CARGO_BUILD_COMMAND cargo build ${RUST_BUILD_TYPE} ${RUST_TARGET_OPT} --target-dir "${CMAKE_BINARY_DIR}/target")
 if(BUILD_COVERAGE)
-  set(CARGO_BUILD_COMMAND ${CMAKE_COMMAND} -E env "RUSTFLAGS=-C instrument-coverage" ${CARGO_BUILD_COMMAND})
+  set(PROFRAW_DIR "${CMAKE_BINARY_DIR}/profraw")
+  set(CARGO_BUILD_COMMAND ${CMAKE_COMMAND} -E env "RUSTFLAGS=-C instrument-coverage" "LLVM_PROFILE_FILE=${PROFRAW_DIR}/%p_%m.profraw" ${CARGO_BUILD_COMMAND})
 endif()
 add_custom_target(rust-lib ALL
   COMMAND ${CARGO_BUILD_COMMAND}
@@ -427,9 +428,6 @@ if(BUILD_TESTS)
 
   # Set up coverage profraw output directory
   if(BUILD_COVERAGE)
-    set(PROFRAW_DIR "${CMAKE_BINARY_DIR}/profraw")
-    file(REMOVE_RECURSE ${PROFRAW_DIR})
-    file(MAKE_DIRECTORY ${PROFRAW_DIR})
     set(TEST_ENV_PREFIX ${CMAKE_COMMAND} -E env "LLVM_PROFILE_FILE=${PROFRAW_DIR}/%p_%m.profraw")
   else()
     set(TEST_ENV_PREFIX)
