@@ -282,6 +282,37 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Where Filter no Index", "[quer
   lancedb_table_free(table);
 }
 
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Filter on non-existent column", "[query]") {
+  const std::string table_name = "query_filter_nonexistent_column_test";
+
+  // Create table with data (columns: "key" and "data")
+  LanceDBTable* table = create_table_with_data(table_name, 10, 0);
+  REQUIRE(table != nullptr);
+
+  // Create query
+  LanceDBQuery* query = lancedb_query_new(table);
+  REQUIRE(query != nullptr);
+
+  // Select existing columns
+  const char* columns[] = {"key", "data"};
+  char* error_message = nullptr;
+  LanceDBError result = lancedb_query_select(query, columns, 2, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+
+  // Filter on a column that does not exist in the table
+  error_message = nullptr;
+  result = lancedb_query_where_filter(query, "key = \"key_42\" OR unknown = \"value\"", &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(error_message == nullptr);
+  // error should be caught at execution time
+  LanceDBQueryResult* query_result = lancedb_query_execute(query);
+  REQUIRE(query_result == nullptr);
+  error_message = nullptr;
+
+  lancedb_table_free(table);
+}
+
 TEST_CASE_METHOD(LanceDBSessionFixture, "LanceDB Query - repeated queries populate session cache stats", "[query][session]") {
 
   LanceDBSessionCacheStats initial_index_stats{};
