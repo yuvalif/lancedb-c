@@ -612,3 +612,59 @@ pub unsafe extern "C" fn lancedb_free_index_list(indices: *mut *mut c_char, coun
         libc::free(indices as *mut libc::c_void);
     }
 }
+
+/// Index statistics returned by lancedb_table_index_stats
+#[repr(C)]
+#[derive(Debug)]
+pub struct LanceDBIndexStats {
+    pub num_indexed_rows: usize,
+    pub num_unindexed_rows: usize,
+    pub num_indices: u32,
+}
+
+/// Get statistics for a named index on the table
+///
+/// # Safety
+/// - `table` must be a valid pointer returned from `lancedb_connection_open_table`
+/// - `index_name` must be a valid null-terminated C string
+/// - `stats_out` must be a valid pointer to receive the statistics
+/// - `error_message` can be NULL to ignore detailed error messages
+///
+/// # Returns
+/// - `LANCEDB_SUCCESS` if stats were retrieved
+/// - `LANCEDB_INDEX_NOT_FOUND` if the index does not exist
+/// - Other error codes on failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_table_index_stats(
+    table: *const LanceDBTable,
+    index_name: *const c_char,
+    stats_out: *mut LanceDBIndexStats,
+    error_message: *mut *mut c_char,
+) -> LanceDBError {
+    if table.is_null() || index_name.is_null() || stats_out.is_null() {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    }
+
+    let Ok(name_str) = CStr::from_ptr(index_name).to_str() else {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    };
+
+    let tbl = &(*table).inner;
+    let runtime = get_runtime();
+
+    match runtime.block_on(tbl.index_stats(name_str)) {
+        Ok(Some(stats)) => {
+            (*stats_out).num_indexed_rows = stats.num_indexed_rows;
+            (*stats_out).num_unindexed_rows = stats.num_unindexed_rows;
+            (*stats_out).num_indices = stats.num_indices.unwrap_or(0);
+            LanceDBError::Success
+        }
+        Ok(None) => {
+            // Index not found
+            LanceDBError::IndexNotFound
+        }
+        Err(e) => handle_error(&e, error_message),
+    }
+}

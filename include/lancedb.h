@@ -1331,6 +1331,35 @@ LanceDBError lancedb_table_optimize(
 void lancedb_free_index_list(char** indices, size_t count);
 
 /**
+ * Index statistics structure
+ */
+typedef struct {
+    size_t num_indexed_rows;     // Rows covered by the index
+    size_t num_unindexed_rows;   // Rows not yet indexed
+    unsigned int num_indices;    // Number of index parts (0 if unknown)
+} LanceDBIndexStats;
+
+/**
+ * Get statistics for a named index on the table
+ *
+ * @param table - pointer to LanceDBTable
+ * @param index_name - null-terminated C string containing the index name
+ * @param stats_out - pointer to receive the index statistics
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return LANCEDB_SUCCESS if stats retrieved, LANCEDB_INDEX_NOT_FOUND if index doesn't exist
+ *
+ * The stats are read directly from the LanceDB manifest (no external state needed).
+ * If error_message is provided and an error occurs, the caller must free
+ * the error message with lancedb_free_string().
+ */
+LanceDBError lancedb_table_index_stats(
+    const LanceDBTable* table,
+    const char* index_name,
+    LanceDBIndexStats* stats_out,
+    char** error_message
+);
+
+/**
  * Free Arrow arrays returned by vector search functions
  *
  * @param arrays - array of Arrow C ABI array pointers
