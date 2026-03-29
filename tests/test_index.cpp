@@ -161,6 +161,130 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Scalar Index", "[index]") {
   }
 }
 
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB Index Stats", "[index]") {
+  const std::string table_name = "index_stats_test";
+
+  SECTION("Get stats for a scalar index") {
+    // Create table with data and a BTREE index
+    LanceDBTable* table = create_table_with_data(table_name, 100, 0);
+    REQUIRE(table != nullptr);
+
+    const char* columns[] = {"key"};
+    LanceDBScalarIndexConfig config = {
+      .replace = 0,
+      .force_update_statistics = 0
+    };
+
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_create_scalar_index(
+        table, columns, 1, LANCEDB_INDEX_BTREE, &config, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    // Get the index name
+    char** indices = nullptr;
+    size_t count = 0;
+    result = lancedb_table_list_indices(table, &indices, &count, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(count == 1);
+    std::string index_name = indices[0];
+    lancedb_free_index_list(indices, count);
+
+    // Get index stats
+    LanceDBIndexStats stats = {};
+    result = lancedb_table_index_stats(table, index_name.c_str(), &stats, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+
+    INFO("Indexed rows: " << stats.num_indexed_rows);
+    INFO("Unindexed rows: " << stats.num_unindexed_rows);
+    INFO("Num indices: " << stats.num_indices);
+
+    // After creating the index, all rows should be indexed
+    REQUIRE(stats.num_indexed_rows == 100);
+    REQUIRE(stats.num_unindexed_rows == 0);
+
+    lancedb_table_free(table);
+  }
+
+  SECTION("Stats reflect unindexed rows after adding data") {
+    // Create table with data and a BTREE index
+    LanceDBTable* table = create_table_with_data(table_name, 100, 0);
+    REQUIRE(table != nullptr);
+
+    const char* columns[] = {"key"};
+    LanceDBScalarIndexConfig config = {
+      .replace = 0,
+      .force_update_statistics = 0
+    };
+
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_create_scalar_index(
+        table, columns, 1, LANCEDB_INDEX_BTREE, &config, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    // Get the index name
+    char** indices = nullptr;
+    size_t count = 0;
+    result = lancedb_table_list_indices(table, &indices, &count, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(count == 1);
+    std::string index_name = indices[0];
+    lancedb_free_index_list(indices, count);
+
+    // Add more data (these rows won't be indexed yet)
+    auto batch = create_test_record_batch(50, 100);
+    auto reader = create_reader_from_batch(batch);
+    REQUIRE(reader != nullptr);
+    result = lancedb_table_add(table, reader, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    // Get index stats - should show unindexed rows
+    LanceDBIndexStats stats = {};
+    result = lancedb_table_index_stats(table, index_name.c_str(), &stats, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+
+    INFO("Indexed rows: " << stats.num_indexed_rows);
+    INFO("Unindexed rows: " << stats.num_unindexed_rows);
+
+    REQUIRE(stats.num_indexed_rows == 100);
+    REQUIRE(stats.num_unindexed_rows == 50);
+
+    lancedb_table_free(table);
+  }
+
+  SECTION("Stats for non-existent index returns INDEX_NOT_FOUND") {
+    LanceDBTable* table = create_table_with_data(table_name, 100, 0);
+    REQUIRE(table != nullptr);
+
+    LanceDBIndexStats stats = {};
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_index_stats(
+        table, "no_such_index", &stats, &error_message);
+
+    REQUIRE(result == LANCEDB_INDEX_NOT_FOUND);
+
+    if (error_message) {
+      lancedb_free_string(error_message);
+    }
+
+    lancedb_table_free(table);
+  }
+
+  SECTION("Stats with null table returns INVALID_ARGUMENT") {
+    LanceDBIndexStats stats = {};
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_table_index_stats(
+        nullptr, "some_index", &stats, &error_message);
+
+    REQUIRE(result == LANCEDB_INVALID_ARGUMENT);
+
+    if (error_message) {
+      lancedb_free_string(error_message);
+    }
+  }
+}
+
 TEST_CASE_METHOD(LanceDBFixture, "LanceDB Scalar Index List and Drop", "[index]") {
   const std::string table_name = "index_list_drop_test";
 
