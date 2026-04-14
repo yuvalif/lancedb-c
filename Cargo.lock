@@ -3604,6 +3604,7 @@ dependencies = [
  "arrow-data",
  "arrow-schema",
  "chrono",
+ "datafusion-expr",
  "futures",
  "lance",
  "lancedb",

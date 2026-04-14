@@ -9,6 +9,7 @@
 
 pub mod connection;
 pub mod error;
+pub mod expr;
 pub mod index;
 pub mod query;
 pub mod table;
@@ -17,6 +18,7 @@ pub mod types;
 // Re-export all public FFI functions
 pub use connection::*;
 pub use error::*;
+pub use expr::*;
 pub use index::*;
 pub use query::*;
 pub use table::*;

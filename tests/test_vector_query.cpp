@@ -858,6 +858,240 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - Filter on non-existent 
   lancedb_table_free(table);
 }
 
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB Vector Query - DataFusion Expr Filter", "[vector_query][expr]") {
+  const std::string table_name = "vector_query_df_filter_test";
+  constexpr size_t total_rows = 100;
+
+  // Create table with data
+  LanceDBTable* table = create_table_with_data(table_name, total_rows, 0);
+  REQUIRE(table != nullptr);
+
+  SECTION("Vector query with Expr filter by single key") {
+    std::vector<float> query_vector = generate_random_query_vector(TEST_SCHEMA_DIMENSIONS);
+
+    LanceDBVectorQuery* query = lancedb_vector_query_new(
+        table, query_vector.data(), TEST_SCHEMA_DIMENSIONS);
+    REQUIRE(query != nullptr);
+
+    // Build expr: key = "key_42"
+    LanceDBExpr* eq_expr = lancedb_expr_binary(
+        lancedb_expr_column("key"),
+        LANCEDB_BINARY_OP_EQ,
+        lancedb_expr_literal_string("key_42"));
+    REQUIRE(eq_expr != nullptr);
+
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_vector_query_df_filter(query, eq_expr, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(error_message == nullptr);
+
+    result = lancedb_vector_query_limit(query, 10, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
+    REQUIRE(query_result != nullptr);
+
+    FFI_ArrowArray** result_arrays = nullptr;
+    FFI_ArrowSchema* result_schema = nullptr;
+    size_t count = 0;
+    result = lancedb_query_result_to_arrow(
+        query_result, &result_arrays, &result_schema, &count, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(count > 0);
+
+    size_t sum_rows = 0;
+    for (size_t i = 0; i < count; i++) {
+      sum_rows += reinterpret_cast<ArrowArray*>(result_arrays[i])->length;
+    }
+    REQUIRE(sum_rows == 1);
+
+    lancedb_free_arrow_arrays(result_arrays, count);
+    lancedb_free_arrow_schema(result_schema);
+  }
+
+  SECTION("Vector query with Expr IN list filter") {
+    std::vector<float> query_vector = generate_random_query_vector(TEST_SCHEMA_DIMENSIONS);
+
+    LanceDBVectorQuery* query = lancedb_vector_query_new(
+        table, query_vector.data(), TEST_SCHEMA_DIMENSIONS);
+    REQUIRE(query != nullptr);
+
+    // Build expr: key IN ("key_10", "key_20", "key_30")
+    LanceDBExpr* col_expr = lancedb_expr_column("key");
+    LanceDBExpr* list_items[3];
+    list_items[0] = lancedb_expr_literal_string("key_10");
+    list_items[1] = lancedb_expr_literal_string("key_20");
+    list_items[2] = lancedb_expr_literal_string("key_30");
+
+    char* error_message = nullptr;
+    LanceDBExpr* in_expr = lancedb_expr_in_list(col_expr, list_items, 3, false, &error_message);
+    REQUIRE(in_expr != nullptr);
+
+    LanceDBError result = lancedb_vector_query_df_filter(query, in_expr, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    result = lancedb_vector_query_limit(query, 10, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
+    REQUIRE(query_result != nullptr);
+
+    FFI_ArrowArray** result_arrays = nullptr;
+    FFI_ArrowSchema* result_schema = nullptr;
+    size_t count = 0;
+    result = lancedb_query_result_to_arrow(
+        query_result, &result_arrays, &result_schema, &count, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(count > 0);
+
+    size_t sum_rows = 0;
+    for (size_t i = 0; i < count; i++) {
+      sum_rows += reinterpret_cast<ArrowArray*>(result_arrays[i])->length;
+    }
+    REQUIRE(sum_rows == 3);
+
+    lancedb_free_arrow_arrays(result_arrays, count);
+    lancedb_free_arrow_schema(result_schema);
+  }
+
+  SECTION("Vector query with Expr OR filter") {
+    std::vector<float> query_vector = generate_random_query_vector(TEST_SCHEMA_DIMENSIONS);
+
+    LanceDBVectorQuery* query = lancedb_vector_query_new(
+        table, query_vector.data(), TEST_SCHEMA_DIMENSIONS);
+    REQUIRE(query != nullptr);
+
+    // Build expr: key = "key_10" OR key = "key_20"
+    LanceDBExpr* or_expr = lancedb_expr_or(
+        lancedb_expr_binary(
+            lancedb_expr_column("key"),
+            LANCEDB_BINARY_OP_EQ,
+            lancedb_expr_literal_string("key_10")),
+        lancedb_expr_binary(
+            lancedb_expr_column("key"),
+            LANCEDB_BINARY_OP_EQ,
+            lancedb_expr_literal_string("key_20")));
+    REQUIRE(or_expr != nullptr);
+
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_vector_query_df_filter(query, or_expr, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    result = lancedb_vector_query_limit(query, 10, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
+    REQUIRE(query_result != nullptr);
+
+    FFI_ArrowArray** result_arrays = nullptr;
+    FFI_ArrowSchema* result_schema = nullptr;
+    size_t count = 0;
+    result = lancedb_query_result_to_arrow(
+        query_result, &result_arrays, &result_schema, &count, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(count > 0);
+
+    size_t sum_rows = 0;
+    for (size_t i = 0; i < count; i++) {
+      sum_rows += reinterpret_cast<ArrowArray*>(result_arrays[i])->length;
+    }
+    REQUIRE(sum_rows == 2);
+
+    lancedb_free_arrow_arrays(result_arrays, count);
+    lancedb_free_arrow_schema(result_schema);
+  }
+
+  SECTION("Vector query Expr filter with unknown key (should return empty result)") {
+    std::vector<float> query_vector = generate_random_query_vector(TEST_SCHEMA_DIMENSIONS);
+
+    LanceDBVectorQuery* query = lancedb_vector_query_new(
+        table, query_vector.data(), TEST_SCHEMA_DIMENSIONS);
+    REQUIRE(query != nullptr);
+
+    // Build expr: key = "key_999" (doesn't exist)
+    LanceDBExpr* eq_expr = lancedb_expr_binary(
+        lancedb_expr_column("key"),
+        LANCEDB_BINARY_OP_EQ,
+        lancedb_expr_literal_string("key_999"));
+    REQUIRE(eq_expr != nullptr);
+
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_vector_query_df_filter(query, eq_expr, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    result = lancedb_vector_query_limit(query, 10, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
+    REQUIRE(query_result != nullptr);
+
+    FFI_ArrowArray** result_arrays = nullptr;
+    FFI_ArrowSchema* result_schema = nullptr;
+    size_t count = 0;
+    result = lancedb_query_result_to_arrow(
+        query_result, &result_arrays, &result_schema, &count, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(count == 0);
+    REQUIRE(result_arrays == nullptr);
+    REQUIRE(result_schema == nullptr);
+  }
+
+  SECTION("Vector query Expr filter on non-existent column (should fail at execution)") {
+    std::vector<float> query_vector = generate_random_query_vector(TEST_SCHEMA_DIMENSIONS);
+
+    LanceDBVectorQuery* query = lancedb_vector_query_new(
+        table, query_vector.data(), TEST_SCHEMA_DIMENSIONS);
+    REQUIRE(query != nullptr);
+
+    // Build expr: nonexistent_column = "value"
+    LanceDBExpr* eq_expr = lancedb_expr_binary(
+        lancedb_expr_column("nonexistent_column"),
+        LANCEDB_BINARY_OP_EQ,
+        lancedb_expr_literal_string("value"));
+    REQUIRE(eq_expr != nullptr);
+
+    char* error_message = nullptr;
+    LanceDBError result = lancedb_vector_query_df_filter(query, eq_expr, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    result = lancedb_vector_query_limit(query, 10, &error_message);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    // Error should be caught at execution time
+    LanceDBQueryResult* query_result = lancedb_vector_query_execute(query);
+    REQUIRE(query_result == nullptr);
+  }
+
+  SECTION("Vector query df_filter null arguments") {
+    std::vector<float> query_vector = generate_random_query_vector(TEST_SCHEMA_DIMENSIONS);
+
+    LanceDBVectorQuery* query = lancedb_vector_query_new(
+        table, query_vector.data(), TEST_SCHEMA_DIMENSIONS);
+    REQUIRE(query != nullptr);
+
+    char* error_message = nullptr;
+
+    // Null expr
+    LanceDBError result = lancedb_vector_query_df_filter(query, nullptr, &error_message);
+    REQUIRE(result == LANCEDB_INVALID_ARGUMENT);
+    REQUIRE(error_message != nullptr);
+    lancedb_free_string(error_message);
+    error_message = nullptr;
+
+    // Null query
+    LanceDBExpr* expr = lancedb_expr_column("key");
+    result = lancedb_vector_query_df_filter(nullptr, expr, &error_message);
+    REQUIRE(result == LANCEDB_INVALID_ARGUMENT);
+    REQUIRE(error_message != nullptr);
+    lancedb_free_string(error_message);
+    lancedb_expr_free(expr);
+
+    lancedb_vector_query_free(query);
+  }
+
+  lancedb_table_free(table);
+}
+
 TEST_CASE_METHOD(LanceDBSessionFixture, "LanceDB Vector Query - repeated queries populate session cache stats", "[vector_query][session]") {
   LanceDBSessionCacheStats initial_index_stats{};
   LanceDBSessionCacheStats final_index_stats{};

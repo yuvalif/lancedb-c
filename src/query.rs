@@ -15,11 +15,13 @@ use arrow_array::{Array, RecordBatch, StructArray};
 use arrow_data::ArrayData;
 use futures::TryStreamExt;
 
-use lancedb::query::{ExecutableQuery, QueryBase, Select};
+use datafusion_expr::Expr;
+use lancedb::query::{ExecutableQuery, HasQuery, QueryBase, QueryFilter, Select};
 use lancedb::{DistanceType, Table};
 
 use crate::connection::{get_runtime, LanceDBTable};
 use crate::error::{set_invalid_argument_message, set_unknown_error_message, LanceDBError};
+use crate::expr::LanceDBExpr;
 use crate::types::LanceDBDistanceType;
 
 /// Opaque handle to a LanceDB Query
@@ -30,6 +32,7 @@ pub struct LanceDBQuery {
     offset: Option<usize>,
     select: Option<Select>,
     filter: Option<String>,
+    df_filter: Option<Expr>,
 }
 
 /// Opaque handle to a LanceDB VectorQuery
@@ -42,6 +45,7 @@ pub struct LanceDBVectorQuery {
     offset: Option<usize>,
     select: Option<Select>,
     filter: Option<String>,
+    df_filter: Option<Expr>,
     distance_type: Option<DistanceType>,
     nprobes: Option<usize>,
     refine_factor: Option<u32>,
@@ -76,6 +80,7 @@ pub unsafe extern "C" fn lancedb_query_new(table: *const LanceDBTable) -> *mut L
         offset: None,
         select: None,
         filter: None,
+        df_filter: None,
     });
 
     Box::into_raw(query)
@@ -113,6 +118,7 @@ pub unsafe extern "C" fn lancedb_vector_query_new(
         offset: None,
         select: None,
         filter: None,
+        df_filter: None,
         distance_type: None,
         nprobes: None,
         refine_factor: None,
@@ -233,6 +239,29 @@ pub unsafe extern "C" fn lancedb_query_where_filter(
     };
 
     (*query).filter = Some(filter_str);
+    LanceDBError::Success
+}
+
+/// Set DataFusion Expr filter for query
+///
+/// # Safety
+/// - `query` must be a valid pointer returned from `lancedb_query_new`
+/// - `expr` must be a valid pointer returned from `lancedb_expr_*` functions
+/// - `expr` is consumed by this function; do not use or free it after calling
+/// - `error_message` can be NULL to ignore detailed error messages
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_query_df_filter(
+    query: *mut LanceDBQuery,
+    expr: *mut LanceDBExpr,
+    error_message: *mut *mut c_char,
+) -> LanceDBError {
+    if query.is_null() || expr.is_null() {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    }
+
+    let expr_box = Box::from_raw(expr);
+    (*query).df_filter = Some(expr_box.inner);
     LanceDBError::Success
 }
 
@@ -379,6 +408,29 @@ pub unsafe extern "C" fn lancedb_vector_query_where_filter(
     LanceDBError::Success
 }
 
+/// Set DataFusion Expr filter for vector query
+///
+/// # Safety
+/// - `query` must be a valid pointer returned from `lancedb_vector_query_new`
+/// - `expr` must be a valid pointer returned from `lancedb_expr_*` functions
+/// - `expr` is consumed by this function; do not use or free it after calling
+/// - `error_message` can be NULL to ignore detailed error messages
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_vector_query_df_filter(
+    query: *mut LanceDBVectorQuery,
+    expr: *mut LanceDBExpr,
+    error_message: *mut *mut c_char,
+) -> LanceDBError {
+    if query.is_null() || expr.is_null() {
+        set_invalid_argument_message(error_message);
+        return LanceDBError::InvalidArgument;
+    }
+
+    let expr_box = Box::from_raw(expr);
+    (*query).df_filter = Some(expr_box.inner);
+    LanceDBError::Success
+}
+
 /// Set distance type for vector query
 ///
 /// # Safety
@@ -491,7 +543,9 @@ pub unsafe extern "C" fn lancedb_query_execute(
         if let Some(ref select) = query_box.select {
             rust_query = rust_query.select(select.clone());
         }
-        if let Some(ref filter) = query_box.filter {
+        if let Some(df_filter) = query_box.df_filter {
+            rust_query.mut_query().filter = Some(QueryFilter::Datafusion(df_filter));
+        } else if let Some(ref filter) = query_box.filter {
             rust_query = rust_query.only_if(filter);
         }
 
@@ -545,7 +599,9 @@ pub unsafe extern "C" fn lancedb_vector_query_execute(
         if let Some(ref select) = query_box.select {
             rust_query = rust_query.select(select.clone());
         }
-        if let Some(ref filter) = query_box.filter {
+        if let Some(df_filter) = query_box.df_filter {
+            rust_query.mut_query().filter = Some(QueryFilter::Datafusion(df_filter));
+        } else if let Some(ref filter) = query_box.filter {
             rust_query = rust_query.only_if(filter);
         }
         if let Some(distance_type) = query_box.distance_type {

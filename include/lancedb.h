@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,6 +34,11 @@ typedef struct LanceDBTable LanceDBTable;
  * Opaque handle to a LanceDB TableNamesBuilder
  */
 typedef struct LanceDBTableNamesBuilder LanceDBTableNamesBuilder;
+
+/**
+ * Opaque handle to a DataFusion Expr (for building filter expressions)
+ */
+typedef struct LanceDBExpr LanceDBExpr;
 
 /**
  * Opaque handle to a LanceDB Query
@@ -175,6 +181,25 @@ typedef enum {
     LANCEDB_OPTIMIZE_PRUNE = 2,   // Only prune old versions
     LANCEDB_OPTIMIZE_INDEX = 3    // Only rebuild indices
 } LanceDBOptimizeType;
+
+/**
+ * Binary operator enum for DataFusion expressions
+ */
+typedef enum {
+    LANCEDB_BINARY_OP_EQ = 0,
+    LANCEDB_BINARY_OP_NOT_EQ = 1,
+    LANCEDB_BINARY_OP_LT = 2,
+    LANCEDB_BINARY_OP_LT_EQ = 3,
+    LANCEDB_BINARY_OP_GT = 4,
+    LANCEDB_BINARY_OP_GT_EQ = 5,
+    LANCEDB_BINARY_OP_AND = 6,
+    LANCEDB_BINARY_OP_OR = 7,
+    LANCEDB_BINARY_OP_PLUS = 8,
+    LANCEDB_BINARY_OP_MINUS = 9,
+    LANCEDB_BINARY_OP_MULTIPLY = 10,
+    LANCEDB_BINARY_OP_DIVIDE = 11,
+    LANCEDB_BINARY_OP_MODULO = 12
+} LanceDBBinaryOp;
 
 /**
  * Vector index configuration
@@ -843,6 +868,9 @@ LanceDBError lancedb_query_select(
 /**
  * Set WHERE filter for query
  *
+ * If both a SQL WHERE clause and a DataFusion filters are set, the DataFusion expression
+ * takes precedence.
+ *
  * @param query - pointer to LanceDBQuery
  * @param filter - SQL WHERE clause string
  * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
@@ -854,6 +882,23 @@ LanceDBError lancedb_query_select(
 LanceDBError lancedb_query_where_filter(
     LanceDBQuery* query,
     const char* filter,
+    char** error_message
+);
+
+/**
+ * Set DataFusion Expr filter for query
+ *
+ * If both a DataFusion and a SQL WHERE clause filters are set, the DataFusion expression
+ * takes precedence.
+ *
+ * @param query - pointer to LanceDBQuery
+ * @param expr - pointer to LanceDBExpr (consumed by this function; do not use or free after calling)
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Error code indicating success or failure
+ */
+LanceDBError lancedb_query_df_filter(
+    LanceDBQuery* query,
+    LanceDBExpr* expr,
     char** error_message
 );
 
@@ -930,6 +975,9 @@ LanceDBError lancedb_vector_query_select(
 /**
  * Set WHERE filter for vector query
  *
+ * If both a SQL WHERE clause and a DataFusion filters are set, the DataFusion expression
+ * takes precedence.
+ *
  * @param query - pointer to LanceDBVectorQuery
  * @param filter - SQL WHERE clause string
  * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
@@ -941,6 +989,23 @@ LanceDBError lancedb_vector_query_select(
 LanceDBError lancedb_vector_query_where_filter(
     LanceDBVectorQuery* query,
     const char* filter,
+    char** error_message
+);
+
+/**
+ * Set DataFusion Expr filter for vector query
+ *
+ * If both a DataFusion and a SQL WHERE clause filters are set, the DataFusion expression
+ * takes precedence.
+ *
+ * @param query - pointer to LanceDBVectorQuery
+ * @param expr - pointer to LanceDBExpr (consumed by this function; do not use or free after calling)
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Error code indicating success or failure
+ */
+LanceDBError lancedb_vector_query_df_filter(
+    LanceDBVectorQuery* query,
+    LanceDBExpr* expr,
     char** error_message
 );
 
@@ -1505,6 +1570,160 @@ void lancedb_free_metadata(char** keys, char** values, size_t count);
  * @param str - string pointer returned by LanceDB functions
  */
 void lancedb_free_string(char* str);
+
+/* ==================== DataFusion Expression Builder API ==================== */
+
+/**
+ * Create a column reference expression
+ *
+ * @param name - null-terminated C string containing the column name
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         Caller must free with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_column(const char* name);
+
+/**
+ * Create a string literal expression
+ *
+ * @param value - null-terminated C string containing the literal value
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         Caller must free with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_literal_string(const char* value);
+
+/**
+ * Create an integer literal expression (i64)
+ *
+ * @param value - the integer value
+ * @return Non-null pointer to LanceDBExpr
+ *         Caller must free with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_literal_i64(int64_t value);
+
+/**
+ * Create a float literal expression (f64)
+ *
+ * @param value - the float value
+ * @return Non-null pointer to LanceDBExpr
+ *         Caller must free with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_literal_f64(double value);
+
+/**
+ * Create a boolean literal expression
+ *
+ * @param value - the boolean value
+ * @return Non-null pointer to LanceDBExpr
+ *         Caller must free with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_literal_bool(bool value);
+
+/**
+ * Create a binary expression (left op right)
+ *
+ * @param left - pointer to LanceDBExpr for left operand (consumed)
+ * @param op - binary operator
+ * @param right - pointer to LanceDBExpr for right operand (consumed)
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         Both left and right are consumed; do not use or free them after calling
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_binary(
+    LanceDBExpr* left,
+    LanceDBBinaryOp op,
+    LanceDBExpr* right
+);
+
+/**
+ * Create a NOT expression
+ *
+ * @param expr - pointer to LanceDBExpr (consumed)
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         The input expr is consumed; do not use or free it after calling
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_not(LanceDBExpr* expr);
+
+/**
+ * Create an IS NULL expression
+ *
+ * @param expr - pointer to LanceDBExpr (consumed)
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         The input expr is consumed; do not use or free it after calling
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_is_null(LanceDBExpr* expr);
+
+/**
+ * Create an IS NOT NULL expression
+ *
+ * @param expr - pointer to LanceDBExpr (consumed)
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         The input expr is consumed; do not use or free it after calling
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_is_not_null(LanceDBExpr* expr);
+
+/**
+ * Create an AND expression (convenience for binary AND)
+ *
+ * @param left - pointer to LanceDBExpr (consumed)
+ * @param right - pointer to LanceDBExpr (consumed)
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         Both inputs are consumed; do not use or free them after calling
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_and(LanceDBExpr* left, LanceDBExpr* right);
+
+/**
+ * Create an OR expression (convenience for binary OR)
+ *
+ * @param left - pointer to LanceDBExpr (consumed)
+ * @param right - pointer to LanceDBExpr (consumed)
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         Both inputs are consumed; do not use or free them after calling
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_or(LanceDBExpr* left, LanceDBExpr* right);
+
+/**
+ * Create an IN list expression (expr IN (value1, value2, ...))
+ *
+ * @param expr - pointer to LanceDBExpr for the expression to check (consumed)
+ * @param list - array of pointers to LanceDBExpr for list values (all consumed)
+ * @param list_len - number of elements in the list
+ * @param negated - if true, creates NOT IN instead of IN
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         The input expr and all list elements are consumed; do not use or free them after calling
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_in_list(
+    LanceDBExpr* expr,
+    LanceDBExpr* const* list,
+    size_t list_len,
+    bool negated,
+    char** error_message
+);
+
+/**
+ * Clone an expression (creates an independent copy)
+ *
+ * @param expr - pointer to LanceDBExpr to clone (not consumed)
+ * @return Non-null pointer to a new LanceDBExpr on success, NULL on failure
+ *         The original expr remains valid and must still be freed separately
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_clone(const LanceDBExpr* expr);
+
+/**
+ * Free an expression
+ *
+ * @param expr - pointer to LanceDBExpr
+ *
+ * After calling this function, the expr pointer must not be used.
+ */
+void lancedb_expr_free(LanceDBExpr* expr);
 
 #ifdef __cplusplus
 }
