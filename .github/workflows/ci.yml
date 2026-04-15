@@ -93,6 +93,30 @@ jobs:
           export PATH=$PATH:$GITHUB_WORKSPACE/build/target/release
           ctest --test-dir build -j
 
+  build_fedora:
+    name: Build on Fedora
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: dnf install -y gcc gcc-c++ cmake ninja-build protobuf-compiler protobuf-devel rust cargo libarrow-devel valgrind git
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -G Ninja -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: ninja -C build
+
+      - name: Test
+        run: ctest --test-dir build -j
+
   cross_compile:
     name: Cross-compile Windows on Linux
     runs-on: ubuntu-latest
