@@ -27,6 +27,3 @@ arrow-schema = "56.2"
 datafusion-expr = "50.1"
 futures = "0"
 chrono = "0"
-
-[profile.dev.package.aws-lc-sys]
-opt-level = 1

@@ -93,17 +93,26 @@ jobs:
           export PATH=$PATH:$GITHUB_WORKSPACE/build/target/release
           ctest --test-dir build -j
 
-  build_fedora:
-    name: Build on Fedora
+  build_almalinux:
+    name: Build on AlmaLinux 9
     runs-on: ubuntu-latest
     container:
-      image: fedora:latest
-
+      image: almalinux:9
     steps:
       - uses: actions/checkout@v4
 
+      - name: Enable CRB and EPEL repos
+        run: |
+          dnf install -y dnf-plugins-core epel-release
+          dnf config-manager --set-enabled crb
+
+      - name: Install Apache Arrow repo
+        run: >
+          dnf install -y
+          "https://packages.apache.org/artifactory/arrow/almalinux/9/apache-arrow-release-latest.rpm"
+
       - name: Install build tools
-        run: dnf install -y gcc gcc-c++ cmake ninja-build protobuf-compiler protobuf-devel rust cargo libarrow-devel valgrind git
+        run: dnf install -y gcc gcc-c++ cmake ninja-build protobuf-compiler protobuf-devel rust cargo arrow-devel valgrind git
 
       - name: Configure CMake
         run: |
