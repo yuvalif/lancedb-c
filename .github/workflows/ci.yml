@@ -118,7 +118,7 @@ jobs:
         run: |
           mkdir -p build
           cd build
-          cmake .. -G Ninja -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake .. -G Ninja -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release -DSTRIP_FORTIFY_SOURCE=ON
 
       - name: Build
         run: ninja -C build
