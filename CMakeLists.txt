@@ -83,7 +83,6 @@ option(BUILD_EXAMPLES "Build examples" OFF)
 option(BUILD_DOCS "Build documentation" OFF)
 option(BUILD_TESTS "Build tests" OFF)
 option(BUILD_COVERAGE "Enable Rust code coverage reporting (requires llvm-tools-preview)" OFF)
-option(STRIP_FORTIFY_SOURCE "Strip _FORTIFY_SOURCE from CFLAGS for jitterentropy compatibility" OFF)
 
 if(BUILD_COVERAGE)
   if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -121,14 +120,7 @@ if (BUILD_EXAMPLES OR BUILD_TESTS)
 endif()
 
 # rust-lib target
-if(STRIP_FORTIFY_SOURCE)
-  set(CARGO_CFLAGS "$ENV{CFLAGS}")
-  string(REGEX REPLACE "-D_FORTIFY_SOURCE=[0-9]+" "" CARGO_CFLAGS "${CARGO_CFLAGS}")
-  set(CARGO_CFLAGS "${CARGO_CFLAGS} -U_FORTIFY_SOURCE")
-  set(CARGO_BUILD_COMMAND ${CMAKE_COMMAND} -E env "CFLAGS=${CARGO_CFLAGS}" cargo build ${RUST_BUILD_TYPE} ${RUST_TARGET_OPT} --target-dir "${CMAKE_BINARY_DIR}/target")
-else()
   set(CARGO_BUILD_COMMAND cargo build ${RUST_BUILD_TYPE} ${RUST_TARGET_OPT} --target-dir "${CMAKE_BINARY_DIR}/target")
-endif()
 if(BUILD_COVERAGE)
   set(PROFRAW_DIR "${CMAKE_BINARY_DIR}/profraw")
   set(CARGO_BUILD_COMMAND ${CMAKE_COMMAND} -E env "RUSTFLAGS=-C instrument-coverage" "LLVM_PROFILE_FILE=${PROFRAW_DIR}/%p_%m.profraw" ${CARGO_BUILD_COMMAND})
@@ -138,7 +130,6 @@ add_custom_target(rust-lib ALL
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   COMMENT "Building Rust library..."
   BYPRODUCTS ${LANCEDB_LIB_PATHS}
-  VERBATIM
 )
 
 # lancedb target
