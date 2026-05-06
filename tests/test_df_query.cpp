@@ -839,3 +839,119 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
 
   lancedb_table_free(table);
 }
+
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DF filter + JSON post-filter on metadata", "[query][expr][json]") {
+  // Create a schema with key (utf8) and metadata (utf8 holding JSON)
+  auto key_field = arrow::field("key", arrow::utf8());
+  auto meta_field = arrow::field("metadata", arrow::utf8());
+  auto schema = arrow::schema({key_field, meta_field});
+
+  // Build rows: k0..k4 with JSON metadata
+  arrow::StringBuilder key_builder;
+  arrow::StringBuilder meta_builder;
+
+  REQUIRE(key_builder.Append("k0").ok());
+  REQUIRE(meta_builder.Append(R"({"color":"red","priority":1})").ok());
+  REQUIRE(key_builder.Append("k1").ok());
+  REQUIRE(meta_builder.Append(R"({"color":"blue","priority":5})").ok());
+  REQUIRE(key_builder.Append("k2").ok());
+  REQUIRE(meta_builder.Append(R"({"color":"red","priority":3})").ok());
+  REQUIRE(key_builder.Append("k3").ok());
+  REQUIRE(meta_builder.Append(R"({"color":"green","priority":2})").ok());
+  REQUIRE(key_builder.Append("k4").ok());
+  REQUIRE(meta_builder.Append(R"({"color":"blue","priority":4})").ok());
+
+  std::shared_ptr<arrow::Array> key_array, meta_array;
+  REQUIRE(key_builder.Finish(&key_array).ok());
+  REQUIRE(meta_builder.Finish(&meta_array).ok());
+
+  auto batch = arrow::RecordBatch::Make(schema, 5, {key_array, meta_array});
+  auto reader = create_reader_from_batch(batch);
+  REQUIRE(reader != nullptr);
+
+  struct ArrowSchema c_schema;
+  REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+  LanceDBTable* table = nullptr;
+  char* error_message = nullptr;
+  LanceDBError result = lancedb_table_create(
+      db, "df_json_meta_test",
+      reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+      reader, &table, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(table != nullptr);
+  if (c_schema.release) {
+    c_schema.release(&c_schema);
+  }
+
+  // Use a DataFusion Expr to query: key >= "k1" AND key <= "k3"
+  // This should return k1, k2, k3 (3 rows)
+  LanceDBExpr* df_filter = lancedb_expr_binary(
+      lancedb_expr_binary(
+          lancedb_expr_column("key"),
+          LANCEDB_BINARY_OP_GT_EQ,
+          lancedb_expr_literal_string("k1")),
+      LANCEDB_BINARY_OP_AND,
+      lancedb_expr_binary(
+          lancedb_expr_column("key"),
+          LANCEDB_BINARY_OP_LT_EQ,
+          lancedb_expr_literal_string("k3")));
+  REQUIRE(df_filter != nullptr);
+
+  LanceDBQuery* query = lancedb_query_new(table);
+  REQUIRE(query != nullptr);
+  const char* columns[] = {"key", "metadata"};
+  result = lancedb_query_select(query, columns, 2, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  result = lancedb_query_df_filter(query, df_filter, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+
+  LanceDBQueryResult* query_result = lancedb_query_execute(query);
+  REQUIRE(query_result != nullptr);
+
+  // Convert to Arrow
+  FFI_ArrowArray** result_arrays = nullptr;
+  FFI_ArrowSchema* result_schema = nullptr;
+  size_t count = 0;
+  result = lancedb_query_result_to_arrow(
+      query_result, &result_arrays, &result_schema, &count, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(count > 0);
+
+  // JSON post-filter: color = "red" AND priority > 1
+  const char* color_path[] = {"color"};
+  const char* priority_path[] = {"priority"};
+  LanceDBExpr* json_filter = lancedb_expr_binary(
+      lancedb_expr_binary(
+          lancedb_expr_json_get_str(lancedb_expr_column("metadata"), color_path, 1),
+          LANCEDB_BINARY_OP_EQ,
+          lancedb_expr_literal_string("red")),
+      LANCEDB_BINARY_OP_AND,
+      lancedb_expr_binary(
+          lancedb_expr_json_get_int(lancedb_expr_column("metadata"), priority_path, 1),
+          LANCEDB_BINARY_OP_GT,
+          lancedb_expr_literal_i64(1)));
+  REQUIRE(json_filter != nullptr);
+
+  bool* json_results = nullptr;
+  size_t json_count = 0;
+  char* json_err = nullptr;
+  result = lancedb_json_matches(
+      result_arrays, result_schema, count,
+      json_filter, &json_results, &json_count, &json_err);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(json_err == nullptr);
+  REQUIRE(json_count == 3);
+  // Among k1(blue,5), k2(red,3), k3(green,2) only k2 matches
+  size_t matched = 0;
+  for (size_t i = 0; i < json_count; i++) {
+    if (json_results[i]) matched++;
+  }
+  REQUIRE(matched == 1);
+  lancedb_free_json_matches(json_results);
+
+  lancedb_free_arrow_arrays(result_arrays, count);
+  lancedb_free_arrow_schema(result_schema);
+  lancedb_table_free(table);
+}
+

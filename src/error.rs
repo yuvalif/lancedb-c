@@ -125,6 +125,22 @@ pub(crate) unsafe fn set_unknown_error_message(error_message_out: *mut *mut c_ch
     }
 }
 
+/// Set a custom error message string
+pub(crate) unsafe fn set_custom_error_message(error_message_out: *mut *mut c_char, msg: &str) {
+    if error_message_out.is_null() {
+        return;
+    }
+
+    match CString::new(msg) {
+        Ok(c_str) => {
+            *error_message_out = c_str.into_raw();
+        }
+        Err(_) => {
+            *error_message_out = ptr::null_mut();
+        }
+    }
+}
+
 /// Set simple error message for the not supported error cases
 pub(crate) unsafe fn set_not_supported_message(error_message_out: *mut *mut c_char) {
     if error_message_out.is_null() {

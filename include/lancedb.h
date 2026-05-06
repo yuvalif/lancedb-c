@@ -1725,6 +1725,127 @@ LanceDBExpr* lancedb_expr_clone(const LanceDBExpr* expr);
  */
 void lancedb_expr_free(LanceDBExpr* expr);
 
+/* ==================== JSON Expression API ==================== */
+
+/**
+ * Create a json_get_str expression: extract a string value from JSON by path
+ *
+ * For nested access, pass multiple path segments (e.g., ["user", "name"] for {"user":{"name":"alice"}}).
+ *
+ * @param json_expr - pointer to LanceDBExpr for the JSON column (consumed)
+ * @param path - array of null-terminated C strings forming the JSON path
+ * @param path_len - number of path segments
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         The json_expr is consumed; do not use or free it after calling.
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_json_get_str(LanceDBExpr* json_expr, const char* const* path, size_t path_len);
+
+/**
+ * Create a json_get_int expression: extract an integer value from JSON by path
+ *
+ * For nested access, pass multiple path segments (e.g., ["stats", "count"] for {"stats":{"count":42}}).
+ *
+ * @param json_expr - pointer to LanceDBExpr for the JSON column (consumed)
+ * @param path - array of null-terminated C strings forming the JSON path
+ * @param path_len - number of path segments
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         The json_expr is consumed; do not use or free it after calling.
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_json_get_int(LanceDBExpr* json_expr, const char* const* path, size_t path_len);
+
+/**
+ * Create a json_get_float expression: extract a float value from JSON by path
+ *
+ * For nested access, pass multiple path segments (e.g., ["stats", "score"] for {"stats":{"score":4.2}}).
+ *
+ * @param json_expr - pointer to LanceDBExpr for the JSON column (consumed)
+ * @param path - array of null-terminated C strings forming the JSON path
+ * @param path_len - number of path segments
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         The json_expr is consumed; do not use or free it after calling.
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_json_get_float(LanceDBExpr* json_expr, const char* const* path, size_t path_len);
+
+/**
+ * Create a json_get_bool expression: extract a boolean value from JSON by path
+ *
+ * For nested access, pass multiple path segments (e.g., ["user", "active"] for {"user":{"active":true}}).
+ *
+ * @param json_expr - pointer to LanceDBExpr for the JSON column (consumed)
+ * @param path - array of null-terminated C strings forming the JSON path
+ * @param path_len - number of path segments
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         The json_expr is consumed; do not use or free it after calling.
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_json_get_bool(LanceDBExpr* json_expr, const char* const* path, size_t path_len);
+
+/**
+ * Create a json_contains expression: check if a key exists in JSON
+ *
+ * For nested access, pass multiple path segments (e.g., ["user", "name"] to check
+ * if {"user":{"name":"alice"}} has the nested key).
+ *
+ * @param json_expr - pointer to LanceDBExpr for the JSON column (consumed)
+ * @param path - array of null-terminated C strings forming the JSON path
+ * @param path_len - number of path segments
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         The json_expr is consumed; do not use or free it after calling.
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_json_contains(LanceDBExpr* json_expr, const char* const* path, size_t path_len);
+
+/**
+ * Evaluate a JSON filter expression against Arrow RecordBatches.
+ *
+ * Takes the Arrow FFI arrays and schema from lancedb_query_result_to_arrow
+ * and a filter expression. Returns a boolean array indicating which rows
+ * matched. The arrays are NOT consumed and remain valid after the call.
+ *
+ * Must be called while the arrays are valid (before consuming them with
+ * arrow::ImportRecordBatch or freeing with lancedb_free_arrow_arrays).
+ *
+ * Example: to filter rows where metadata.name = "alice":
+ *   col  = lancedb_expr_column("metadata")
+ *   path = (const char*[]){"name"}
+ *   name = lancedb_expr_json_get_str(col, path, 1)
+ *   val  = lancedb_expr_literal_string("alice")
+ *   expr = lancedb_expr_binary(name, LANCEDB_BINARY_OP_EQ, val)
+ *   lancedb_json_matches(arrays, schema, count, expr,
+ *                        &results, &nrows, &error_message)
+ *
+ * @param arrays - array of FFI_ArrowArray pointers (NOT consumed)
+ * @param schema - pointer to FFI_ArrowSchema (NOT consumed)
+ * @param batch_count - number of batches in the arrays
+ * @param expr - pointer to LanceDBExpr filter expression (consumed)
+ * @param results_out - pointer to receive allocated bool array (one per row)
+ * @param count_out - pointer to receive total row count across all batches
+ * @param error_message - optional pointer to receive detailed error message
+ * @return Error code indicating success or failure.
+ *         The expr is consumed; do not use or free it after calling.
+ *         Caller must free *results_out with lancedb_free_json_matches().
+ *         If error_message is set, caller must free with lancedb_free_string().
+ */
+LanceDBError lancedb_json_matches(
+    FFI_ArrowArray** arrays,
+    FFI_ArrowSchema* schema,
+    size_t batch_count,
+    LanceDBExpr* expr,
+    bool** results_out,
+    size_t* count_out,
+    char** error_message
+);
+
+/**
+ * Free results array returned by lancedb_json_matches
+ *
+ * @param results - pointer returned by lancedb_json_matches, or NULL
+ */
+void lancedb_free_json_matches(bool* results);
+
 #ifdef __cplusplus
 }
 #endif

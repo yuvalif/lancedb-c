@@ -20,10 +20,12 @@ tokio = { version = "1.23", features = ["rt-multi-thread"] }
 libc = "0.2"
 lancedb = { version = "0.22.3", features = ["remote"] }
 lance = "0.39.0"
-arrow = { version = "56.2", optional = false }
 arrow-array = "56.2"
 arrow-data = "56.2"
 arrow-schema = "56.2"
+datafusion-common = "50"
 datafusion-expr = "50.1"
+datafusion-functions-json = "0.50"
+datafusion-physical-expr = "50"
 futures = "0"
 chrono = "0"
