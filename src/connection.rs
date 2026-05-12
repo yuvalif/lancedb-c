@@ -418,7 +418,7 @@ pub unsafe extern "C" fn lancedb_table_create(
         let batch_reader: Box<dyn RecordBatchReader + Send> = if reader.is_null() {
             // Create empty reader with the schema
             let empty_batches = RecordBatchIterator::new(
-                std::iter::empty::<Result<RecordBatch, arrow::error::ArrowError>>(),
+                std::iter::empty::<Result<RecordBatch, arrow_schema::ArrowError>>(),
                 schema.clone(),
             );
             Box::new(empty_batches)
