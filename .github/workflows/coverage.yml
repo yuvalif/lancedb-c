@@ -13,6 +13,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -61,27 +63,37 @@ jobs:
           name: coverage-report
           path: build/coverage-report/
 
-      # On main: save baseline coverage percentage
+      # On main: save baseline coverage as artifact
       - name: Save baseline coverage
         if: github.ref == 'refs/heads/main'
         run: echo "${{ steps.coverage.outputs.percentage }}" > coverage-baseline.txt
 
-      - name: Cache baseline coverage
+      - name: Upload baseline coverage
         if: github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
+        uses: actions/upload-artifact@v4
         with:
+          name: coverage-baseline
           path: coverage-baseline.txt
-          key: coverage-baseline-${{ github.sha }}
+          overwrite: true
 
-      # On PR: restore baseline and compare
-      - name: Restore baseline coverage
+      # On PR: download baseline from the merge-base commit on main
+      - name: Find merge base
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@v4
+        id: merge_base
+        run: |
+          MERGE_BASE=$(git merge-base HEAD origin/main)
+          echo "sha=$MERGE_BASE" >> $GITHUB_OUTPUT
+          echo "Merge base: $MERGE_BASE"
+
+      - name: Download baseline coverage
+        if: github.event_name == 'pull_request'
+        uses: dawidd6/action-download-artifact@v6
         with:
-          path: coverage-baseline.txt
-          key: coverage-baseline-${{ github.event.pull_request.base.sha }}
-          restore-keys: |
-            coverage-baseline-
+          workflow: coverage.yml
+          commit: ${{ steps.merge_base.outputs.sha }}
+          name: coverage-baseline
+          search_artifacts: true
+          if_no_artifact_found: warn
 
       - name: Compare coverage with baseline
         if: github.event_name == 'pull_request'
@@ -99,6 +111,6 @@ jobs:
               echo "Coverage is maintained or improved: $BASE_COVERAGE% -> $HEAD_COVERAGE%"
             fi
           else
-            echo "No baseline coverage found (first run?). Skipping comparison."
+            echo "No baseline coverage found (first run on main?). Skipping comparison."
             echo "Current coverage: $HEAD_COVERAGE%"
           fi
