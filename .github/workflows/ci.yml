@@ -34,12 +34,12 @@ jobs:
           wget https://apache.jfrog.io/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
           sudo apt-get install -y ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
           sudo apt-get update
-          sudo apt-get install -y libarrow-dev
+          sudo apt-get install -y libarrow-dev libboost-coroutine-dev libboost-context-dev
 
       - name: Install dependencies (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          brew install apache-arrow protobuf
+          brew install apache-arrow protobuf boost
 
       - name: Configure CMake
         run: |
@@ -75,7 +75,7 @@ jobs:
           "https://packages.apache.org/artifactory/arrow/almalinux/10/apache-arrow-release-latest.rpm"
 
       - name: Install build tools
-        run: dnf install -y gcc gcc-c++ cmake ninja-build protobuf-compiler protobuf-devel rust cargo arrow-devel valgrind git
+        run: dnf install -y gcc gcc-c++ cmake ninja-build protobuf-compiler protobuf-devel rust cargo arrow-devel valgrind git boost-devel
 
       - name: Configure CMake
         run: |
@@ -159,7 +159,7 @@ jobs:
           cmake .. -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/toolchain.cmake \
             -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/arrow-install \
-            -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+            -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: ninja -C build

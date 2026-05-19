@@ -190,7 +190,26 @@ if(BUILD_EXAMPLES)
     BUILD_RPATH ${RUST_TARGET_DIR}
   )
 
-  add_custom_target(examples DEPENDS simple full s3)
+  # asio spawn coroutine example
+  add_executable(asio_coroutine examples/asio_coroutine.cpp)
+  find_package(Boost REQUIRED COMPONENTS coroutine context)
+  target_link_libraries(asio_coroutine
+    lancedb
+    Threads::Threads
+    ${ARROW_LIBRARIES}
+    Boost::coroutine
+    Boost::context
+  )
+  target_include_directories(asio_coroutine
+    PRIVATE ${ARROW_INCLUDE_DIRS}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_compile_options(asio_coroutine PRIVATE ${ARROW_CFLAGS_OTHER})
+  set_target_properties(asio_coroutine PROPERTIES
+    BUILD_RPATH ${RUST_TARGET_DIR}
+  )
+
+  add_custom_target(examples DEPENDS simple full s3 asio_coroutine)
 endif()
 
 if(BUILD_DOCS)
