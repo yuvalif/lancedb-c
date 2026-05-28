@@ -1707,6 +1707,24 @@ LanceDBExpr* lancedb_expr_in_list(
 );
 
 /**
+ * Create an array_has expression: check if an array column contains a value
+ *
+ * Returns a boolean expression that is true when the array contains the element.
+ *
+ * @param array_expr - pointer to LanceDBExpr for the array column (consumed)
+ * @param value_expr - pointer to LanceDBExpr for the value to search for (consumed)
+ * @param error_message - optional pointer to receive detailed error message (NULL to ignore)
+ * @return Non-null pointer to LanceDBExpr on success, NULL on failure
+ *         Both inputs are consumed; do not use or free them after calling
+ *         Caller must free result with lancedb_expr_free()
+ */
+LanceDBExpr* lancedb_expr_array_has(
+    LanceDBExpr* array_expr,
+    LanceDBExpr* value_expr,
+    char** error_message
+);
+
+/**
  * Clone an expression (creates an independent copy)
  *
  * @param expr - pointer to LanceDBExpr to clone (not consumed)

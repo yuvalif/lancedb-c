@@ -3625,6 +3625,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-functions-json",
+ "datafusion-functions-nested",
  "datafusion-physical-expr",
  "futures",
  "lance",

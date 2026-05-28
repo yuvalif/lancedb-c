@@ -840,6 +840,229 @@ TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr Type Mismatches", "[query
   lancedb_table_free(table);
 }
 
+TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - Expr array_has filter", "[query][expr]") {
+  // Create a schema with key (utf8) and tags (list<utf8>)
+  auto key_field = arrow::field("key", arrow::utf8());
+  auto tags_field = arrow::field("tags", arrow::list(arrow::utf8()));
+  auto schema = arrow::schema({key_field, tags_field});
+
+  arrow::StringBuilder key_builder;
+  auto tags_builder = std::make_shared<arrow::ListBuilder>(
+      arrow::default_memory_pool(),
+      std::make_shared<arrow::StringBuilder>());
+
+  // Row 0: key="k0", tags=["red", "blue"]
+  REQUIRE(key_builder.Append("k0").ok());
+  REQUIRE(tags_builder->Append().ok());
+  auto* tag_val_builder = static_cast<arrow::StringBuilder*>(tags_builder->value_builder());
+  REQUIRE(tag_val_builder->Append("red").ok());
+  REQUIRE(tag_val_builder->Append("blue").ok());
+
+  // Row 1: key="k1", tags=["green"]
+  REQUIRE(key_builder.Append("k1").ok());
+  REQUIRE(tags_builder->Append().ok());
+  REQUIRE(tag_val_builder->Append("green").ok());
+
+  // Row 2: key="k2", tags=["red", "green", "blue"]
+  REQUIRE(key_builder.Append("k2").ok());
+  REQUIRE(tags_builder->Append().ok());
+  REQUIRE(tag_val_builder->Append("red").ok());
+  REQUIRE(tag_val_builder->Append("green").ok());
+  REQUIRE(tag_val_builder->Append("blue").ok());
+
+  // Row 3: key="k3", tags=["yellow"]
+  REQUIRE(key_builder.Append("k3").ok());
+  REQUIRE(tags_builder->Append().ok());
+  REQUIRE(tag_val_builder->Append("yellow").ok());
+
+  std::shared_ptr<arrow::Array> key_array, tags_array;
+  REQUIRE(key_builder.Finish(&key_array).ok());
+  REQUIRE(tags_builder->Finish(&tags_array).ok());
+
+  auto batch = arrow::RecordBatch::Make(schema, 4, {key_array, tags_array});
+  auto reader = create_reader_from_batch(batch);
+  REQUIRE(reader != nullptr);
+
+  struct ArrowSchema c_schema;
+  REQUIRE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+  LanceDBTable* table = nullptr;
+  char* error_message = nullptr;
+  LanceDBError result = lancedb_table_create(
+      db, "array_has_test",
+      reinterpret_cast<FFI_ArrowSchema*>(&c_schema),
+      reader, &table, &error_message);
+  REQUIRE(result == LANCEDB_SUCCESS);
+  REQUIRE(table != nullptr);
+  if (c_schema.release) {
+    c_schema.release(&c_schema);
+  }
+
+  SECTION("array_has finds matching rows") {
+    // Build expr: array_has(tags, "red") — should match k0, k2
+    char* err = nullptr;
+    LanceDBExpr* has_expr = lancedb_expr_array_has(
+        lancedb_expr_column("tags"),
+        lancedb_expr_literal_string("red"),
+        &err);
+    REQUIRE(has_expr != nullptr);
+    REQUIRE(err == nullptr);
+
+    LanceDBQuery* query = lancedb_query_new(table);
+    REQUIRE(query != nullptr);
+
+    const char* columns[] = {"key", "tags"};
+    result = lancedb_query_select(query, columns, 2, &err);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    result = lancedb_query_df_filter(query, has_expr, &err);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    REQUIRE(query_result != nullptr);
+
+    FFI_ArrowArray** result_arrays = nullptr;
+    FFI_ArrowSchema* result_schema = nullptr;
+    size_t count = 0;
+    result = lancedb_query_result_to_arrow(
+        query_result, &result_arrays, &result_schema, &count, &err);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(count > 0);
+
+    size_t total_rows = 0;
+    for (size_t i = 0; i < count; i++) {
+      total_rows += reinterpret_cast<ArrowArray*>(result_arrays[i])->length;
+    }
+    REQUIRE(total_rows == 2);
+
+    lancedb_free_arrow_arrays(result_arrays, count);
+    lancedb_free_arrow_schema(result_schema);
+  }
+
+  SECTION("array_has with no matches") {
+    // Build expr: array_has(tags, "purple") — no rows have "purple"
+    char* err = nullptr;
+    LanceDBExpr* has_expr = lancedb_expr_array_has(
+        lancedb_expr_column("tags"),
+        lancedb_expr_literal_string("purple"),
+        &err);
+    REQUIRE(has_expr != nullptr);
+    REQUIRE(err == nullptr);
+
+    LanceDBQuery* query = lancedb_query_new(table);
+    REQUIRE(query != nullptr);
+
+    const char* columns[] = {"key", "tags"};
+    result = lancedb_query_select(query, columns, 2, &err);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    result = lancedb_query_df_filter(query, has_expr, &err);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    REQUIRE(query_result != nullptr);
+
+    FFI_ArrowArray** result_arrays = nullptr;
+    FFI_ArrowSchema* result_schema = nullptr;
+    size_t count = 0;
+    result = lancedb_query_result_to_arrow(
+        query_result, &result_arrays, &result_schema, &count, &err);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(count == 0);
+  }
+
+  SECTION("array_has combined with AND") {
+    // Build expr: array_has(tags, "red") AND array_has(tags, "green")
+    // Should match only k2
+    char* err = nullptr;
+    LanceDBExpr* has_red = lancedb_expr_array_has(
+        lancedb_expr_column("tags"),
+        lancedb_expr_literal_string("red"),
+        &err);
+    REQUIRE(has_red != nullptr);
+
+    LanceDBExpr* has_green = lancedb_expr_array_has(
+        lancedb_expr_column("tags"),
+        lancedb_expr_literal_string("green"),
+        &err);
+    REQUIRE(has_green != nullptr);
+
+    LanceDBExpr* and_expr = lancedb_expr_and(has_red, has_green);
+    REQUIRE(and_expr != nullptr);
+
+    LanceDBQuery* query = lancedb_query_new(table);
+    REQUIRE(query != nullptr);
+
+    const char* columns[] = {"key", "tags"};
+    result = lancedb_query_select(query, columns, 2, &err);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    result = lancedb_query_df_filter(query, and_expr, &err);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    REQUIRE(query_result != nullptr);
+
+    FFI_ArrowArray** result_arrays = nullptr;
+    FFI_ArrowSchema* result_schema = nullptr;
+    size_t count = 0;
+    result = lancedb_query_result_to_arrow(
+        query_result, &result_arrays, &result_schema, &count, &err);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    REQUIRE(count > 0);
+
+    size_t total_rows = 0;
+    for (size_t i = 0; i < count; i++) {
+      total_rows += reinterpret_cast<ArrowArray*>(result_arrays[i])->length;
+    }
+    REQUIRE(total_rows == 1);
+
+    lancedb_free_arrow_arrays(result_arrays, count);
+    lancedb_free_arrow_schema(result_schema);
+  }
+
+  SECTION("array_has on non-array column fails at execution") {
+    // key is utf8, not a list — array_has should fail at query execution
+    char* err = nullptr;
+    LanceDBExpr* has_expr = lancedb_expr_array_has(
+        lancedb_expr_column("key"),
+        lancedb_expr_literal_string("k2"),
+        &err);
+    REQUIRE(has_expr != nullptr);
+    REQUIRE(err == nullptr);
+
+    LanceDBQuery* query = lancedb_query_new(table);
+    REQUIRE(query != nullptr);
+
+    const char* columns[] = {"key", "tags"};
+    result = lancedb_query_select(query, columns, 2, &err);
+    REQUIRE(result == LANCEDB_SUCCESS);
+    result = lancedb_query_df_filter(query, has_expr, &err);
+    REQUIRE(result == LANCEDB_SUCCESS);
+
+    LanceDBQueryResult* query_result = lancedb_query_execute(query);
+    REQUIRE(query_result == nullptr);
+  }
+
+  SECTION("Null arguments") {
+    char* err = nullptr;
+    REQUIRE(lancedb_expr_array_has(nullptr, nullptr, &err) == nullptr);
+    REQUIRE(err != nullptr);
+    lancedb_free_string(err);
+
+    err = nullptr;
+    LanceDBExpr* col = lancedb_expr_column("tags");
+    REQUIRE(lancedb_expr_array_has(col, nullptr, &err) == nullptr);
+    REQUIRE(err != nullptr);
+    lancedb_free_string(err);
+
+    err = nullptr;
+    LanceDBExpr* val = lancedb_expr_literal_string("red");
+    REQUIRE(lancedb_expr_array_has(nullptr, val, &err) == nullptr);
+    REQUIRE(err != nullptr);
+    lancedb_free_string(err);
+  }
+
+  lancedb_table_free(table);
+}
+
 TEST_CASE_METHOD(LanceDBFixture, "LanceDB Query - DF filter + JSON post-filter on metadata", "[query][expr][json]") {
   // Create a schema with key (utf8) and metadata (utf8 holding JSON)
   auto key_field = arrow::field("key", arrow::utf8());

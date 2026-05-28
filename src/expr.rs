@@ -9,7 +9,7 @@
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
-use datafusion_expr::expr::BinaryExpr;
+use datafusion_expr::expr::{BinaryExpr, ScalarFunction};
 use datafusion_expr::{col, lit, Expr, Operator};
 
 use crate::error::set_invalid_argument_message;
@@ -346,6 +346,42 @@ pub unsafe extern "C" fn lancedb_expr_in_list(
     Box::into_raw(Box::new(LanceDBExpr {
         inner: inner.in_list(list_exprs, negated),
     }))
+}
+
+/// Create an array_has expression: check if array column contains a value
+///
+/// # Safety
+/// - `array_expr` must be a valid pointer returned from lancedb_expr_* functions (consumed)
+/// - `value_expr` must be a valid pointer returned from lancedb_expr_* functions (consumed)
+/// - Both inputs are consumed; do not use or free them after calling
+///
+/// # Returns
+/// - Non-null pointer to LanceDBExpr on success, NULL on failure
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_expr_array_has(
+    array_expr: *mut LanceDBExpr,
+    value_expr: *mut LanceDBExpr,
+    error_message: *mut *mut c_char,
+) -> *mut LanceDBExpr {
+    let arr = if !array_expr.is_null() {
+        Some(Box::from_raw(array_expr).inner)
+    } else {
+        None
+    };
+    let val = if !value_expr.is_null() {
+        Some(Box::from_raw(value_expr).inner)
+    } else {
+        None
+    };
+
+    let (Some(arr), Some(val)) = (arr, val) else {
+        set_invalid_argument_message(error_message);
+        return std::ptr::null_mut();
+    };
+
+    let udf = datafusion_functions_nested::array_has::array_has_udf();
+    let func_expr = Expr::ScalarFunction(ScalarFunction::new_udf(udf, vec![arr, val]));
+    Box::into_raw(Box::new(LanceDBExpr { inner: func_expr }))
 }
 
 /// Clone an expression (creates an independent copy)
