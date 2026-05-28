@@ -184,6 +184,78 @@ pub unsafe extern "C" fn lancedb_expr_json_contains(
     )
 }
 
+/// Create a json_array_has expression: check if a JSON array contains a value
+///
+/// Composes `json_get_array` (extracts a JSON array as `List<Utf8>`) with
+/// `array_has` to test membership. The `quote_value` flag controls how the
+/// value expression is adapted to match `json_get_array` output:
+/// - `true`: for JSON string arrays — value is wrapped in JSON quotes
+///   (`concat('"', cast(val, Utf8), '"')`) since elements include surrounding quotes.
+/// - `false`: for JSON number/boolean arrays — value is cast to Utf8
+///   since elements are stored as their unquoted text (e.g. `42`, `true`).
+///
+/// For arrays of non-scalar values (objects, nested arrays), it uses exact string
+/// matching against the raw JSON text, which is not JSON-aware.
+///
+/// # Safety
+/// - `json_expr` must be a valid pointer returned from lancedb_expr_* functions (consumed)
+/// - `path` must be a valid pointer to `path_len` null-terminated C strings
+/// - `value_expr` must be a valid pointer returned from lancedb_expr_* functions (consumed)
+#[no_mangle]
+pub unsafe extern "C" fn lancedb_expr_json_array_has(
+    json_expr: *mut LanceDBExpr,
+    path: *const *const c_char,
+    path_len: usize,
+    value_expr: *mut LanceDBExpr,
+    quote_value: bool,
+) -> *mut LanceDBExpr {
+    let val = if !value_expr.is_null() {
+        Some(Box::from_raw(value_expr).inner)
+    } else {
+        None
+    };
+
+    if val.is_none() {
+        if !json_expr.is_null() {
+            let _ = Box::from_raw(json_expr);
+        }
+        return std::ptr::null_mut();
+    }
+    let val = val.unwrap();
+
+    let array_expr_ptr = build_json_udf_expr(
+        datafusion_functions_json::udfs::json_get_array_udf(),
+        json_expr,
+        path,
+        path_len,
+    );
+    if array_expr_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let array_inner = Box::from_raw(array_expr_ptr).inner;
+    let udf = datafusion_functions_nested::array_has::array_has_udf();
+
+    let val_as_utf8 = Expr::Cast(datafusion_expr::Cast::new(
+        Box::new(val),
+        arrow_schema::DataType::Utf8,
+    ));
+
+    let search_val = if quote_value {
+        let concat_udf = datafusion_functions::string::concat();
+        Expr::ScalarFunction(ScalarFunction::new_udf(
+            concat_udf,
+            vec![lit("\""), val_as_utf8, lit("\"")],
+        ))
+    } else {
+        val_as_utf8
+    };
+
+    let func_expr =
+        Expr::ScalarFunction(ScalarFunction::new_udf(udf, vec![array_inner, search_val]));
+    Box::into_raw(Box::new(LanceDBExpr { inner: func_expr }))
+}
+
 /// Evaluate a JSON filter expression against Arrow RecordBatches.
 ///
 /// Takes the Arrow FFI arrays and schema from `lancedb_query_result_to_arrow`

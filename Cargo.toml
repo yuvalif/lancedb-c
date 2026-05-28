@@ -25,6 +25,7 @@ arrow-data = "56.2"
 arrow-schema = "56.2"
 datafusion-common = "50"
 datafusion-expr = "50.1"
+datafusion-functions = { version = "50", default-features = false, features = ["string_expressions"] }
 datafusion-functions-json = "0.50"
 datafusion-functions-nested = "50"
 datafusion-physical-expr = "50"
